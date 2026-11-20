@@ -13,11 +13,13 @@ Requires Node 20.19+, 22.12+, or 24+ (the range the locked Vite and Vitest suppo
 
 ```sh
 npm install
-npm run report -- fixtures/sample-escalated.json
+npm run report -- fixtures/sample-escalated.json --dry-run
 ```
 
-This validates the night record, prints the report, and saves it to `reports/<date>.md`.
-An invalid record prints each problem, writes nothing, and exits with code 1.
+This validates the night record and prints the report. Without `--dry-run` it also saves it
+to `reports/<date>.md`, but never replaces an existing report: it names the file and exits 1.
+Add `--force` to replace it. `--dry-run` always wins and writes nothing, so the command above
+is safe to repeat. An invalid record or unknown option prints the problem and exits 1.
 The records in `fixtures/` are samples, not real nights.
 
 Other commands: `npm test`, `npm run typecheck`.

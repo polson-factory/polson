@@ -10,7 +10,7 @@ Polson is an AI co-founder that ships one verified improvement every night. Each
 - Install: `npm install`
 - Typecheck: `npm run typecheck`
 - Tests: `npm test`
-- Render a sample morning report: `npm run report -- fixtures/sample-escalated.json`
+- Render a sample morning report: `npm run report -- fixtures/sample-escalated.json --dry-run` (`--dry-run` writes nothing; without it, an existing report is never replaced unless you pass `--force`)
 - A change is not done until typecheck and tests pass.
 - CI: `.github/workflows/ci.yml` runs `npm ci`, `npm run typecheck`, and `npm test` on Node 20.19.0 and 24 for every pull request to main and every push to main.
 
@@ -49,4 +49,3 @@ Polson is an AI co-founder that ships one verified improvement every night. Each
 ## Deferred issues
 
 - [#2](https://github.com/shrooms08/polson/issues/2): Report writes are not atomic; a failed write can truncate an existing report.
-- [#3](https://github.com/shrooms08/polson/issues/3): A sample run can overwrite a real night's report that has the same date.
