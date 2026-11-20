@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+*.log
+npm-debug.log*
+.DS_Store
+.env
+.env.*
+
+# Generated morning reports are real-night output, not source.
+reports/

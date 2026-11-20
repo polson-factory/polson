@@ -1,0 +1,24 @@
+{
+  "date": "2026-11-19",
+  "task": {
+    "id": "SAMPLE-103",
+    "title": "Let users delete their account from settings",
+    "acceptanceCriteria": [
+      "A \"Delete account\" button appears in settings",
+      "Deletion asks for confirmation first",
+      "The user's data is removed according to the retention policy"
+    ]
+  },
+  "outcome": "escalated",
+  "review": {
+    "reviewer": "independent-reviewer",
+    "verdict": "approved",
+    "findings": 1
+  },
+  "checks": [
+    { "name": "typecheck", "status": "pass" },
+    { "name": "unit tests", "status": "pass", "detail": "151 passed" }
+  ],
+  "reason": "The retention policy does not say whether invoices must be kept after an account is deleted. Guessing could break a legal obligation.",
+  "questionForHuman": "When a user deletes their account, should their invoices be kept for 7 years or deleted with everything else?"
+}

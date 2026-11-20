@@ -1,0 +1,27 @@
+{
+  "date": "2026-11-17",
+  "task": {
+    "id": "SAMPLE-101",
+    "title": "Show a friendly message when the search returns no results",
+    "acceptanceCriteria": [
+      "An empty search shows \"No matches yet. Try a shorter query.\"",
+      "The message is announced to screen readers",
+      "Existing search results render unchanged"
+    ]
+  },
+  "outcome": "shipped",
+  "pullRequest": {
+    "number": 101,
+    "url": "https://github.com/example/sample-app/pull/101"
+  },
+  "review": {
+    "reviewer": "independent-reviewer",
+    "verdict": "approved",
+    "findings": 0
+  },
+  "checks": [
+    { "name": "typecheck", "status": "pass" },
+    { "name": "unit tests", "status": "pass", "detail": "142 passed" },
+    { "name": "acceptance criteria", "status": "pass", "detail": "3 of 3 met" }
+  ]
+}
