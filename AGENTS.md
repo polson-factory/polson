@@ -12,6 +12,7 @@ Polson is an AI co-founder that ships one verified improvement every night. Each
 - Tests: `npm test`
 - Render a sample morning report: `npm run report -- fixtures/sample-escalated.json`
 - A change is not done until typecheck and tests pass.
+- CI: `.github/workflows/ci.yml` runs `npm ci`, `npm run typecheck`, and `npm test` on Node 20.19.0 and 24 for every pull request to main and every push to main.
 
 ## Rules
 
