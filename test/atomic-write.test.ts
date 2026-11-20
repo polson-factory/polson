@@ -143,6 +143,50 @@ describe("atomic report writes (#2)", () => {
     });
   });
 
+  describe("a filesystem without hard links (exFAT, FAT32)", () => {
+    const noHardLinks = (code: string): WriteFs => ({
+      ...realFs,
+      link: (async () => {
+        throw fsError(code);
+      }) as WriteFs["link"],
+    });
+
+    it.each(["ENOTSUP", "EOPNOTSUPP", "EPERM"])(
+      "link failing with %s: says hard links are unsupported, exits 1, writes nothing",
+      async (code) => {
+        const result = await runReport([sample()], io(noHardLinks(code)));
+
+        expect(result).toBe(1);
+        expect(err).toContain(`does not support hard links (${code}), for example exFAT or FAT32.`);
+        expect(err).toContain("No report was written, and any existing report is unchanged.");
+        expect(out).toBe("");
+        expect(existsSync(reportFile())).toBe(false);
+        expect(tempFiles()).toEqual([]);
+      },
+    );
+
+    it("leaves an existing report unchanged", async () => {
+      mkdirSync(reportsDir());
+      writeFileSync(reportFile(), "# Keep me\n");
+      const before = sha256(reportFile());
+
+      expect(await runReport([sample()], io(noHardLinks("ENOTSUP")))).toBe(1);
+      expect(sha256(reportFile())).toBe(before);
+      expect(tempFiles()).toEqual([]);
+    });
+
+    it("does not blame hard links for other link errors", async () => {
+      expect(await runReport([sample()], io(failingAt("link")))).toBe(1);
+      expect(err).not.toContain("does not support hard links");
+    });
+
+    it("--force still works there, because it uses rename", async () => {
+      expect(await runReport([sample(), "--force"], io(noHardLinks("ENOTSUP")))).toBe(0);
+      expect(readFileSync(reportFile(), "utf8")).toBe(out);
+      expect(tempFiles()).toEqual([]);
+    });
+  });
+
   describe("no gap between check and write", () => {
     it.each([2, 10])("%i simultaneous runs on the same date: exactly one writes, the rest refuse", async (runs) => {
       const results = await Promise.all(

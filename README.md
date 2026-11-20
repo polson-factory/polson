@@ -20,7 +20,8 @@ This validates the night record and prints the report. Without `--dry-run` it al
 to `reports/<date>.md`, but never replaces an existing report: it names the file and exits 1.
 Add `--force` to replace it. `--dry-run` always wins and writes nothing, so the command above
 is safe to repeat. Reports are written to a temporary file and moved into place, so a failed
-write never leaves a partial report. An invalid record or unknown option prints the problem and exits 1.
+write never leaves a partial report. Writing without `--force` needs a filesystem with hard links
+(APFS, ext4, NTFS); on exFAT or FAT32 it stops with a clear error and writes nothing. An invalid record or unknown option prints the problem and exits 1.
 The records in `fixtures/` are samples, not real nights.
 
 Other commands: `npm test`, `npm run typecheck`.

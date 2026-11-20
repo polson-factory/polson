@@ -150,8 +150,15 @@ export async function runReport(args: string[], io: CliIo): Promise<number> {
     outcome = await writeFileAtomically(reportPath, report, { overwrite: force }, io.fs ?? realFs);
   } catch (error) {
     const failure = error instanceof AtomicWriteError ? error : new AtomicWriteError(error);
+    const noHardLinks =
+      failure.reason === "no-hard-links"
+        ? `The filesystem holding reports/ does not support hard links (${failure.code}), for example exFAT or FAT32.\n` +
+          "Polson needs them to refuse overwriting an existing report safely. Use a folder on a filesystem\n" +
+          "with hard links (APFS, ext4, NTFS), or pass --force, which replaces by rename and skips the overwrite check.\n"
+        : "";
     io.err(
       `Could not write ${reportName}: ${describeFailure(failure)}\n` +
+        noHardLinks +
         "No report was written, and any existing report is unchanged.\n" +
         (failure.leftoverTemp ? `Could not remove the temporary file ${failure.leftoverTemp}.\n` : ""),
     );

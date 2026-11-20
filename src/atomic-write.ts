@@ -42,11 +42,22 @@ export type WriteOutcome = {
   leftoverTemp?: string;
 };
 
+/**
+ * Error codes `link` returns when the filesystem cannot make hard links
+ * (exFAT and FAT32 return ENOTSUP on macOS; Linux uses EPERM).
+ */
+const NO_HARD_LINKS = new Set(["ENOTSUP", "EOPNOTSUPP", "EPERM"]);
+
 /** A failed write. Nothing at the target was changed. */
 export class AtomicWriteError extends Error {
   constructor(
     cause: unknown,
     readonly leftoverTemp?: string,
+    /**
+     * "no-hard-links": the folder's filesystem cannot make hard links, which a
+     * write without overwrite needs to refuse an existing report atomically.
+     */
+    readonly reason?: "no-hard-links",
   ) {
     super(cause instanceof Error ? cause.message : String(cause), { cause });
     this.name = "AtomicWriteError";
@@ -71,6 +82,7 @@ export async function writeFileAtomically(
 
   let status: WriteOutcome["status"] | undefined;
   let failure: unknown;
+  let reason: AtomicWriteError["reason"];
   try {
     await fs.mkdir(dir, { recursive: true });
 
@@ -90,8 +102,15 @@ export async function writeFileAtomically(
         await fs.link(temp, target);
         status = "written";
       } catch (error) {
-        if ((error as { code?: string }).code !== "EEXIST") throw error;
-        status = "exists";
+        const code = (error as { code?: string }).code;
+        if (code === "EEXIST") {
+          status = "exists";
+        } else {
+          // No safe fallback: without a hard link, refusing an existing report
+          // and placing the new one cannot be a single atomic step.
+          if (code !== undefined && NO_HARD_LINKS.has(code)) reason = "no-hard-links";
+          throw error;
+        }
       }
     }
   } catch (error) {
@@ -106,7 +125,7 @@ export async function writeFileAtomically(
   const leftoverTemp = cleanupFailed ? temp : undefined;
 
   if (failure !== undefined || status === undefined) {
-    throw new AtomicWriteError(failure, leftoverTemp);
+    throw new AtomicWriteError(failure, leftoverTemp, reason);
   }
   return leftoverTemp ? { status, leftoverTemp } : { status };
 }
