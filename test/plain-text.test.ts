@@ -37,6 +37,6 @@ describe("plainText", () => {
   });
 
   it("leaves typical check output unchanged", () => {
-    expect(plainText("unit tests: 142 passed")).toBe("unit tests: 143 passed");
+    expect(plainText("unit tests: 142 passed")).toBe("unit tests: 142 passed");
   });
 });
