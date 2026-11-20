@@ -5,15 +5,20 @@ import { z } from "zod";
  * and checked, and what happened in the end.
  *
  * The schema enforces the product's core promise: a record can only say
- * "shipped" if no check failed and the reviewer did not request changes.
+ * "shipped" if it was verified, meaning an approved review and at least one
+ * check, with every check passing.
  *
  * Error messages are written to follow the field path, e.g.
  * `reason: is required when outcome is "blocked"`.
  */
 
+// No `m` flag, so `^` and `$` anchor to the whole string. The length check
+// makes that explicit: no trailing "\n" or "\r" can slip into a report filename.
 const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+const DATE_LENGTH = "YYYY-MM-DD".length;
 
 function isRealCalendarDate(value: string): boolean {
+  if (value.length !== DATE_LENGTH) return false;
   const match = DATE_PATTERN.exec(value);
   if (!match) return false;
   const y = Number(match[1]);
@@ -56,7 +61,13 @@ const TaskSchema = z.strictObject(
 
 const PullRequestSchema = z.strictObject({
   number: z.number({ error: "must be a number" }).int().positive("must be a positive integer"),
-  url: z.url({ error: "must be a valid URL" }),
+  // Only http(s) links reach the report. `normalize` stores the parsed href,
+  // which is percent-encoded and cannot contain whitespace, "<" or ">".
+  url: z.url({
+    protocol: /^https?$/,
+    normalize: true,
+    error: "must be a valid http or https URL",
+  }),
 });
 
 const ReviewSchema = z.strictObject({
@@ -105,6 +116,24 @@ export const NightRecordSchema = z
   })
   .superRefine((record, ctx) => {
     if (record.outcome !== "shipped") return;
+
+    // "Shipped" means verified: an approved review, at least one check, and
+    // every check passing. Each missing piece is reported on its own.
+    if (!record.review) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["review"],
+        message: 'is required when outcome is "shipped" (an approved review)',
+      });
+    }
+
+    if (record.checks.length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["checks"],
+        message: 'must include at least one check when outcome is "shipped"',
+      });
+    }
 
     record.checks.forEach((check, index) => {
       if (check.status === "fail") {

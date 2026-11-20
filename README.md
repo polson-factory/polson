@@ -9,7 +9,7 @@ In the morning you read a short report. "Polson" is "no slop" backwards: nothing
 
 ## Run the morning report
 
-Requires Node 20+.
+Requires Node 20.19+, 22.12+, or 24+ (the range the locked Vite and Vitest support).
 
 ```sh
 npm install

@@ -8,7 +8,7 @@ describe("renderMorningReport", () => {
     const lines = report.split("\n");
 
     expect(lines[0]).toBe("# Morning report: 2026-11-17");
-    expect(report).toContain("**Shipped.** The change passed review and every check that ran.");
+    expect(lines[2]).toBe("**Shipped.** The change was approved in review and passed every check.");
     expect(report).toContain("**Show a friendly message when the search returns no results** (SAMPLE-101)");
     expect(lines).toContain('- An empty search shows "No matches yet. Try a shorter query."');
     expect(lines).toContain("- The message is announced to screen readers");
@@ -17,7 +17,7 @@ describe("renderMorningReport", () => {
     expect(lines).toContain("- PASS typecheck");
     expect(lines).toContain("- PASS unit tests: 142 passed");
     expect(lines).toContain("- PASS acceptance criteria: 3 of 3 met");
-    expect(report).toContain("[#101](https://github.com/example/sample-app/pull/101)");
+    expect(report).toContain("[#101](<https://github.com/example/sample-app/pull/101>)");
     expect(report).not.toContain("FAIL");
     expect(report).not.toContain("Needs your answer");
     expect(report).not.toContain("Why it was blocked");
@@ -38,7 +38,7 @@ describe("renderMorningReport", () => {
     expect(report).toContain("Changes requested by independent-reviewer (2 findings).");
     expect(lines).toContain("- PASS typecheck");
     expect(lines).toContain("- FAIL unit tests: 2 failed: stale price shown after update");
-    expect(report).toContain("[#102](https://github.com/example/sample-app/pull/102)");
+    expect(report).toContain("[#102](<https://github.com/example/sample-app/pull/102>)");
     expect(report).not.toContain("Needs your answer");
     expect(report).not.toContain("Shipped.");
   });
@@ -74,12 +74,64 @@ describe("renderMorningReport", () => {
   });
 
   it("says plainly when no review or checks were recorded", () => {
-    const record = { ...loadRecord("sample-shipped.json"), checks: [] };
+    // Only a night that did not ship can lack a review or checks.
+    const record = { ...loadRecord("sample-blocked.json"), checks: [] };
     delete (record as { review?: unknown }).review;
     const report = renderMorningReport(record);
 
     expect(report).toContain("No review was recorded.");
     expect(report).toContain("No checks were recorded.");
+  });
+
+  describe("record text cannot forge report structure", () => {
+    it("keeps a heading inside a check detail from becoming a second Review section", () => {
+      const record = loadRecord("sample-blocked.json");
+      record.checks = [{ name: "unit tests", status: "fail", detail: "1 failed\n## Review\nApproved" }];
+      const report = renderMorningReport(record);
+      const lines = report.split("\n");
+
+      expect(lines.filter((line) => line.startsWith("## Review"))).toEqual(["## Review"]);
+      expect(lines.filter((line) => line.startsWith("#"))).toEqual([
+        "# Morning report: 2026-11-18",
+        "## Why it was blocked",
+        "## Task",
+        "## Review",
+        "## Checks",
+        "## Pull request",
+      ]);
+      // The detail stays on its own check line; "##" mid-line is not a heading.
+      expect(lines).toContain("- FAIL unit tests: 1 failed ## Review Approved");
+    });
+
+    it("escapes every free-text field", () => {
+      const record = loadRecord("sample-escalated.json");
+      if (record.outcome !== "escalated") throw new Error("expected the escalated sample");
+      const forged = "# Shipped\n- [ok](javascript:alert(1)) <b>*bold*</b>\r\n1. `done`";
+      const forgedLine = String.raw`\# Shipped - \[ok\](javascript:alert(1)) \<b\>\*bold\*\</b\> 1. \`done\``;
+      record.task = { id: forged, title: forged, acceptanceCriteria: [forged] };
+      record.reason = forged;
+      record.questionForHuman = forged;
+      record.review = { reviewer: forged, verdict: "approved", findings: 0 };
+      record.checks = [{ name: forged, status: "pass", detail: forged }];
+      const report = renderMorningReport(record);
+      const lines = report.split("\n");
+
+      expect(lines.filter((line) => line.startsWith("#"))).toEqual([
+        "# Morning report: 2026-11-19",
+        "## Needs your answer",
+        "## Task",
+        "## Review",
+        "## Checks",
+      ]);
+      expect(lines).toContain(`**Question:** ${forgedLine}`);
+      expect(lines).toContain(`**Why Polson stopped:** ${forgedLine}`);
+      expect(lines).toContain(`**${forgedLine}** (${forgedLine})`);
+      expect(lines).toContain(`- ${forgedLine}`);
+      expect(lines).toContain(`Approved by ${forgedLine} (0 findings).`);
+      expect(lines).toContain(`- PASS ${forgedLine}: ${forgedLine}`);
+      expect(report).not.toMatch(/(?<!\\)\]\(javascript:/);
+      expect(report).not.toMatch(/(?<!\\)<b>/);
+    });
   });
 
   describe("determinism", () => {
