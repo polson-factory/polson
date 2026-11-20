@@ -1,7 +1,8 @@
-import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { AtomicWriteError, realFs, writeFileAtomically, type WriteFs } from "./atomic-write.js";
 import { renderMorningReport } from "./morning-report.js";
 import { parseNightRecord } from "./night-record.js";
 
@@ -14,6 +15,8 @@ import { parseNightRecord } from "./night-record.js";
  *
  * - An existing report is never replaced unless `--force` is given: the run
  *   names the file, exits 1, and leaves the file unchanged.
+ * - The write is atomic (see atomic-write.ts): a report is either fully written
+ *   or not at all, and a failed write leaves any existing report unchanged.
  * - `--dry-run` prints the report and writes nothing, and says what a real run
  *   would have done. It wins over `--force`, so adding `--dry-run` to any
  *   command is always a safe preview.
@@ -54,6 +57,12 @@ function parseOptions(args: string[]): Options | { error: string } {
   };
 }
 
+/** The error's code and message, without repeating a code Node already put in the message. */
+function describeFailure(failure: AtomicWriteError): string {
+  const { code, message } = failure;
+  return code && !message.startsWith(`${code}:`) ? `${code}: ${message}` : message;
+}
+
 /**
  * Whether something already occupies the report path. `lstat` checks the path
  * itself, so a dangling symlink counts as present, matching what the "wx"
@@ -74,6 +83,8 @@ export interface CliIo {
   cwd: string;
   out: (text: string) => void;
   err: (text: string) => void;
+  /** Filesystem calls used to write the report; tests inject failures here. */
+  fs?: WriteFs;
 }
 
 export async function runReport(args: string[], io: CliIo): Promise<number> {
@@ -130,23 +141,37 @@ export async function runReport(args: string[], io: CliIo): Promise<number> {
     return 0;
   }
 
-  await mkdir(reportsDir, { recursive: true });
+  // Only for the wording of the success message; the write itself decides
+  // atomically whether a report already exists (see atomic-write.ts).
   const replacing = force && (await probe(reportPath)) === "present";
+
+  let outcome;
   try {
-    // "wx" creates the file only if it does not exist, in one step, so an
-    // existing report is never opened for writing without --force.
-    await writeFile(reportPath, report, { encoding: "utf8", flag: force ? "w" : "wx" });
+    outcome = await writeFileAtomically(reportPath, report, { overwrite: force }, io.fs ?? realFs);
   } catch (error) {
-    if ((error as { code?: string }).code !== "EEXIST") throw error;
+    const failure = error instanceof AtomicWriteError ? error : new AtomicWriteError(error);
+    io.err(
+      `Could not write ${reportName}: ${describeFailure(failure)}\n` +
+        "No report was written, and any existing report is unchanged.\n" +
+        (failure.leftoverTemp ? `Could not remove the temporary file ${failure.leftoverTemp}.\n` : ""),
+    );
+    return 1;
+  }
+
+  if (outcome.status === "exists") {
     io.err(
       `${reportName} already exists, so it was not overwritten.\n` +
-        "Use --force to replace it, or --dry-run to print the report without writing.\n",
+        "Use --force to replace it, or --dry-run to print the report without writing.\n" +
+        (outcome.leftoverTemp ? `Could not remove the temporary file ${outcome.leftoverTemp}.\n` : ""),
     );
     return 1;
   }
 
   io.out(report);
-  io.err(`\n${replacing ? "Replaced" : "Wrote"} ${reportName}\n`);
+  io.err(
+    `\n${replacing ? "Replaced" : "Wrote"} ${reportName}\n` +
+      (outcome.leftoverTemp ? `Warning: could not remove the temporary file ${outcome.leftoverTemp}.\n` : ""),
+  );
   return 0;
 }
 
