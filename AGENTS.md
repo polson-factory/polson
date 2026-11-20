@@ -48,4 +48,4 @@ Polson is an AI co-founder that ships one verified improvement every night. Each
 
 ## Deferred issues
 
-- [#2](https://github.com/shrooms08/polson/issues/2): Report writes are not atomic; a failed write can truncate an existing report.
+None.
