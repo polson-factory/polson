@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
@@ -54,12 +54,19 @@ function parseOptions(args: string[]): Options | { error: string } {
   };
 }
 
-async function exists(path: string): Promise<boolean> {
+/**
+ * Whether something already occupies the report path. `lstat` checks the path
+ * itself, so a dangling symlink counts as present, matching what the "wx"
+ * write will do. Only ENOENT means absent; any other error is returned so the
+ * caller does not guess.
+ */
+async function probe(path: string): Promise<"present" | "absent" | { error: string }> {
   try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
+    await lstat(path);
+    return "present";
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    return code === "ENOENT" ? "absent" : { error: code ?? (error as Error).message };
   }
 }
 
@@ -109,19 +116,22 @@ export async function runReport(args: string[], io: CliIo): Promise<number> {
   const reportPath = resolve(reportsDir, `${parsed.record.date}.md`);
 
   if (dryRun) {
-    const alreadyThere = await exists(reportPath);
-    const realRun = !alreadyThere
-      ? `would write ${reportName}`
-      : force
-        ? `would replace ${reportName} (--force)`
-        : `would refuse: ${reportName} already exists (use --force to replace it)`;
+    const state = await probe(reportPath);
+    const realRun =
+      state === "absent"
+        ? `A real run would write ${reportName}.`
+        : state === "present"
+          ? force
+            ? `A real run would replace ${reportName} (--force).`
+            : `A real run would refuse: ${reportName} already exists (use --force to replace it).`
+          : `Could not check ${reportName} (${state.error}), so what a real run would do is unknown.`;
     io.out(report);
-    io.err(`\nDry run: nothing was written. A real run ${realRun}.\n`);
+    io.err(`\nDry run: nothing was written. ${realRun}\n`);
     return 0;
   }
 
   await mkdir(reportsDir, { recursive: true });
-  const replacing = force && (await exists(reportPath));
+  const replacing = force && (await probe(reportPath)) === "present";
   try {
     // "wx" creates the file only if it does not exist, in one step, so an
     // existing report is never opened for writing without --force.

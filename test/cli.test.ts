@@ -1,4 +1,15 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -136,6 +147,55 @@ describe("report CLI", () => {
       expect(err).toContain("A real run would replace reports/2026-11-19.md (--force).");
       expect(readFileSync(reportFile(), "utf8")).toBe(existing);
     });
+
+    describe("a dangling symlink at the report path", () => {
+      const seedDanglingSymlink = () => {
+        mkdirSync(join(cwd, "reports"));
+        const target = join(cwd, "missing-dir", "target.md");
+        symlinkSync(target, reportFile());
+        return target;
+      };
+
+      it("--dry-run predicts a refusal, matching what the real run does", async () => {
+        const target = seedDanglingSymlink();
+
+        expect(await runReport([sample(), "--dry-run"], io())).toBe(0);
+        expect(err).toContain("A real run would refuse: reports/2026-11-19.md already exists");
+
+        err = "";
+        out = "";
+        expect(await runReport([sample()], io())).toBe(1);
+        expect(err).toContain("reports/2026-11-19.md already exists, so it was not overwritten.");
+        expect(readlinkSync(reportFile())).toBe(target);
+        expect(lstatSync(reportFile()).isSymbolicLink()).toBe(true);
+      });
+
+      it("--dry-run with --force predicts a replace", async () => {
+        seedDanglingSymlink();
+
+        expect(await runReport([sample(), "--force", "--dry-run"], io())).toBe(0);
+        expect(err).toContain("A real run would replace reports/2026-11-19.md (--force).");
+      });
+    });
+
+    it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+      "--dry-run says the outcome is unknown when the report path cannot be checked",
+      async () => {
+        // Without search permission on reports/, lstat fails with EACCES, not ENOENT.
+        mkdirSync(join(cwd, "reports"));
+        chmodSync(join(cwd, "reports"), 0o000);
+        try {
+          expect(await runReport([sample(), "--dry-run"], io())).toBe(0);
+          expect(out).toContain("# Morning report: 2026-11-19");
+          expect(err).toContain(
+            "Could not check reports/2026-11-19.md (EACCES), so what a real run would do is unknown.",
+          );
+          expect(err).not.toContain("would write");
+        } finally {
+          chmodSync(join(cwd, "reports"), 0o755);
+        }
+      },
+    );
 
     it("--dry-run still rejects an invalid record with exit 1", async () => {
       const record = loadRawFixture("sample-escalated.json");
