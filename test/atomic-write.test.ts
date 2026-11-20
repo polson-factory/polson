@@ -151,7 +151,7 @@ describe("atomic report writes (#2)", () => {
       }) as WriteFs["link"],
     });
 
-    it.each(["ENOTSUP", "EOPNOTSUPP", "EPERM"])(
+    it.each(["ENOTSUP", "EOPNOTSUPP"])(
       "link failing with %s: says hard links are unsupported, exits 1, writes nothing",
       async (code) => {
         const result = await runReport([sample()], io(noHardLinks(code)));
@@ -164,6 +164,22 @@ describe("atomic report writes (#2)", () => {
         expect(tempFiles()).toEqual([]);
       },
     );
+
+    it("link failing with EPERM: names both possible causes, does not suggest --force, writes nothing", async () => {
+      // EPERM can also mean a permission or security restriction, so it must not
+      // be presented as proof of an unsupported filesystem.
+      const result = await runReport([sample()], io(noHardLinks("EPERM")));
+
+      expect(result).toBe(1);
+      expect(err).toContain("The system refused to create a hard link in reports/ (EPERM).");
+      expect(err).toContain("or a permission or security restriction blocked it.");
+      expect(err).not.toContain("does not support hard links (EPERM)");
+      expect(err).not.toContain("--force");
+      expect(err).toContain("No report was written, and any existing report is unchanged.");
+      expect(out).toBe("");
+      expect(existsSync(reportFile())).toBe(false);
+      expect(tempFiles()).toEqual([]);
+    });
 
     it("leaves an existing report unchanged", async () => {
       mkdirSync(reportsDir());

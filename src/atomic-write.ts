@@ -43,10 +43,18 @@ export type WriteOutcome = {
 };
 
 /**
- * Error codes `link` returns when the filesystem cannot make hard links
- * (exFAT and FAT32 return ENOTSUP on macOS; Linux uses EPERM).
+ * Error codes from `link` that mean the filesystem cannot make hard links
+ * (exFAT and FAT32 return ENOTSUP on macOS).
  */
-const NO_HARD_LINKS = new Set(["ENOTSUP", "EOPNOTSUPP", "EPERM"]);
+const NO_HARD_LINKS = new Set(["ENOTSUP", "EOPNOTSUPP"]);
+
+/**
+ * EPERM from `link` is ambiguous: on Linux it means either a filesystem without
+ * hard links or a permission or security restriction (protected_hardlinks,
+ * immutable files, a sandbox). It is reported as "link denied", not as proof of
+ * an unsupported filesystem.
+ */
+const LINK_DENIED = "EPERM";
 
 /** A failed write. Nothing at the target was changed. */
 export class AtomicWriteError extends Error {
@@ -56,8 +64,10 @@ export class AtomicWriteError extends Error {
     /**
      * "no-hard-links": the folder's filesystem cannot make hard links, which a
      * write without overwrite needs to refuse an existing report atomically.
+     * "link-denied": the hard link was refused (EPERM), either for that reason
+     * or because of a permission or security restriction.
      */
-    readonly reason?: "no-hard-links",
+    readonly reason?: "no-hard-links" | "link-denied",
   ) {
     super(cause instanceof Error ? cause.message : String(cause), { cause });
     this.name = "AtomicWriteError";
@@ -109,6 +119,7 @@ export async function writeFileAtomically(
           // No safe fallback: without a hard link, refusing an existing report
           // and placing the new one cannot be a single atomic step.
           if (code !== undefined && NO_HARD_LINKS.has(code)) reason = "no-hard-links";
+          else if (code === LINK_DENIED) reason = "link-denied";
           throw error;
         }
       }
