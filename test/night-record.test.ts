@@ -73,6 +73,34 @@ describe("NightRecord schema", () => {
     ]);
   });
 
+  it("rejects a shipped record that omits both review and checks, reporting both", () => {
+    const { review: _review, checks: _checks, ...record } = loadRawFixture("sample-shipped.json");
+    expect(record).not.toHaveProperty("review");
+    expect(record).not.toHaveProperty("checks");
+    expect(problemsFor(record)).toEqual([
+      'review: is required when outcome is "shipped" (an approved review)',
+      'checks: must include at least one check when outcome is "shipped"',
+    ]);
+  });
+
+  it("still reports a failing check on a shipped record that has no review", () => {
+    const { review: _omit, ...record } = loadRawFixture("sample-shipped.json");
+    record.checks = [{ name: "unit tests", status: "fail" }];
+    expect(problemsFor(record)).toEqual([
+      'review: is required when outcome is "shipped" (an approved review)',
+      'checks.0.status: outcome cannot be "shipped" while check "unit tests" failed',
+    ]);
+  });
+
+  it("still reports changes_requested on a shipped record that has no checks", () => {
+    const { checks: _omit, ...record } = loadRawFixture("sample-shipped.json");
+    record.review = { reviewer: "independent-reviewer", verdict: "changes_requested", findings: 1 };
+    expect(problemsFor(record)).toEqual([
+      'checks: must include at least one check when outcome is "shipped"',
+      'review.verdict: outcome cannot be "shipped" while the reviewer requested changes',
+    ]);
+  });
+
   it("rejects a shipped record with an approved review but zero checks", () => {
     const record = loadRawFixture("sample-shipped.json");
     record.checks = [];

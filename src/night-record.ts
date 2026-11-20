@@ -70,13 +70,15 @@ const PullRequestSchema = z.strictObject({
   }),
 });
 
-const ReviewSchema = z.strictObject({
+const reviewShape = {
   reviewer: requiredText(),
   verdict: z.enum(["approved", "changes_requested"], {
     error: 'must be "approved" or "changes_requested"',
   }),
   findings: z.number({ error: "must be a number" }).int().nonnegative("must be zero or more"),
-});
+};
+
+const ReviewSchema = z.strictObject(reviewShape);
 
 const CheckSchema = z.strictObject({
   name: requiredText(),
@@ -92,8 +94,24 @@ const commonFields = {
   checks: z.array(CheckSchema, { error: "is required (use [] if no checks ran)" }),
 };
 
+const SHIPPED_NEEDS_REVIEW = 'is required when outcome is "shipped" (an approved review)';
+const SHIPPED_NEEDS_CHECKS = 'must include at least one check when outcome is "shipped"';
+
+// "Shipped" means verified. Requiring the review and a non-empty checks list
+// here, in the base schema, means both are reported together even when both
+// fields are absent. (A refinement alone would be skipped once the base parse
+// fails, hiding the second problem.)
 const ShippedRecord = z.strictObject({
   ...commonFields,
+  review: z.strictObject(reviewShape, {
+    error: (issue) =>
+      issue.code === "invalid_type" && issue.input === undefined ? SHIPPED_NEEDS_REVIEW : undefined,
+  }),
+  checks: z
+    .array(CheckSchema, {
+      error: (issue) => (issue.input === undefined ? SHIPPED_NEEDS_CHECKS : "must be a list of checks"),
+    })
+    .min(1, SHIPPED_NEEDS_CHECKS),
   outcome: z.literal("shipped"),
 });
 
@@ -114,45 +132,42 @@ export const NightRecordSchema = z
   .discriminatedUnion("outcome", [ShippedRecord, BlockedRecord, EscalatedRecord], {
     error: 'must be "shipped", "blocked", or "escalated"',
   })
-  .superRefine((record, ctx) => {
-    if (record.outcome !== "shipped") return;
+  .superRefine(
+    (parsed, ctx) => {
+      // This runs for every shipped record, even one with other problems, so a
+      // failing check or rejected review is never hidden behind, say, a missing
+      // field. Fields may therefore be absent or only partly parsed here.
+      const record = parsed as {
+        checks?: unknown;
+        review?: { verdict?: unknown } | undefined;
+      };
+      const checks = Array.isArray(record.checks) ? record.checks : [];
 
-    // "Shipped" means verified: an approved review, at least one check, and
-    // every check passing. Each missing piece is reported on its own.
-    if (!record.review) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["review"],
-        message: 'is required when outcome is "shipped" (an approved review)',
+      checks.forEach((check: { name?: unknown; status?: unknown } | null, index) => {
+        if (check?.status === "fail") {
+          ctx.addIssue({
+            code: "custom",
+            path: ["checks", index, "status"],
+            message: `outcome cannot be "shipped" while check "${String(check.name)}" failed`,
+          });
+        }
       });
-    }
 
-    if (record.checks.length === 0) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["checks"],
-        message: 'must include at least one check when outcome is "shipped"',
-      });
-    }
-
-    record.checks.forEach((check, index) => {
-      if (check.status === "fail") {
+      if (record.review?.verdict === "changes_requested") {
         ctx.addIssue({
           code: "custom",
-          path: ["checks", index, "status"],
-          message: `outcome cannot be "shipped" while check "${check.name}" failed`,
+          path: ["review", "verdict"],
+          message: 'outcome cannot be "shipped" while the reviewer requested changes',
         });
       }
-    });
-
-    if (record.review?.verdict === "changes_requested") {
-      ctx.addIssue({
-        code: "custom",
-        path: ["review", "verdict"],
-        message: 'outcome cannot be "shipped" while the reviewer requested changes',
-      });
-    }
-  });
+    },
+    {
+      when: (payload) =>
+        typeof payload.value === "object" &&
+        payload.value !== null &&
+        (payload.value as { outcome?: unknown }).outcome === "shipped",
+    },
+  );
 
 export type NightRecord = z.infer<typeof NightRecordSchema>;
 export type Outcome = NightRecord["outcome"];
