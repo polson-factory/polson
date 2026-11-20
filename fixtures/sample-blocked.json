@@ -1,0 +1,26 @@
+{
+  "date": "2026-11-18",
+  "task": {
+    "id": "SAMPLE-102",
+    "title": "Cache the pricing page for faster loads",
+    "acceptanceCriteria": [
+      "The pricing page loads in under 500 ms on a cold cache",
+      "Price changes appear within 5 minutes"
+    ]
+  },
+  "outcome": "blocked",
+  "pullRequest": {
+    "number": 102,
+    "url": "https://github.com/example/sample-app/pull/102"
+  },
+  "review": {
+    "reviewer": "independent-reviewer",
+    "verdict": "changes_requested",
+    "findings": 2
+  },
+  "checks": [
+    { "name": "typecheck", "status": "pass" },
+    { "name": "unit tests", "status": "fail", "detail": "2 failed: stale price shown after update" }
+  ],
+  "reason": "The cache served stale prices after an update, so the second acceptance criterion was not met. Polson did not ship it."
+}

@@ -1,0 +1,112 @@
+import { describe, expect, it } from "vitest";
+import { parseNightRecord } from "../src/night-record.js";
+import { loadRawFixture } from "./fixtures.js";
+
+function problemsFor(input: unknown): string[] {
+  const result = parseNightRecord(input);
+  if (result.ok) throw new Error("expected the record to be rejected, but it was accepted");
+  return result.problems;
+}
+
+describe("NightRecord schema", () => {
+  it.each(["sample-shipped.json", "sample-blocked.json", "sample-escalated.json"])(
+    "accepts the sample %s",
+    (name) => {
+      expect(parseNightRecord(loadRawFixture(name)).ok).toBe(true);
+    },
+  );
+
+  it("rejects a blocked record with no reason", () => {
+    const { reason: _omit, ...record } = loadRawFixture("sample-blocked.json");
+    expect(problemsFor(record)).toContain('reason: is required when outcome is "blocked"');
+  });
+
+  it("rejects an escalated record with no reason", () => {
+    const { reason: _omit, ...record } = loadRawFixture("sample-escalated.json");
+    expect(problemsFor(record)).toContain('reason: is required when outcome is "escalated"');
+  });
+
+  it("rejects an escalated record with no questionForHuman", () => {
+    const { questionForHuman: _omit, ...record } = loadRawFixture("sample-escalated.json");
+    expect(problemsFor(record)).toContain(
+      'questionForHuman: is required when outcome is "escalated"',
+    );
+  });
+
+  it("rejects a blank reason", () => {
+    const record = { ...loadRawFixture("sample-blocked.json"), reason: "   " };
+    expect(problemsFor(record)).toContain("reason: must not be empty");
+  });
+
+  it("rejects a shipped record with a failing check", () => {
+    const record = loadRawFixture("sample-shipped.json");
+    record.checks = [
+      { name: "typecheck", status: "pass" },
+      { name: "unit tests", status: "fail", detail: "1 failed" },
+    ];
+    expect(problemsFor(record)).toEqual([
+      'checks.1.status: outcome cannot be "shipped" while check "unit tests" failed',
+    ]);
+  });
+
+  it("rejects a shipped record whose review requested changes", () => {
+    const record = loadRawFixture("sample-shipped.json");
+    record.review = { reviewer: "independent-reviewer", verdict: "changes_requested", findings: 3 };
+    expect(problemsFor(record)).toEqual([
+      'review.verdict: outcome cannot be "shipped" while the reviewer requested changes',
+    ]);
+  });
+
+  it("allows a failing check and changes_requested when the outcome is not shipped", () => {
+    // The blocked sample has both; stopping is exactly what should happen.
+    expect(parseNightRecord(loadRawFixture("sample-blocked.json")).ok).toBe(true);
+  });
+
+  it("rejects empty acceptance criteria", () => {
+    const record = loadRawFixture("sample-shipped.json");
+    record.task = { id: "SAMPLE-1", title: "A task", acceptanceCriteria: [] };
+    expect(problemsFor(record)).toContain(
+      "task.acceptanceCriteria: must list at least one criterion",
+    );
+  });
+
+  it.each([
+    ["wrong format", "11/19/2026"],
+    ["missing zero padding", "2026-1-9"],
+    ["impossible day", "2026-02-30"],
+    ["impossible month", "2026-13-01"],
+    ["trailing text", "2026-11-19T00:00:00Z"],
+  ])("rejects a bad date (%s: %s)", (_label, date) => {
+    const record = { ...loadRawFixture("sample-shipped.json"), date };
+    expect(problemsFor(record)).toContain(
+      "date: must be a real calendar date in YYYY-MM-DD format",
+    );
+  });
+
+  it("rejects a missing date", () => {
+    const { date: _omit, ...record } = loadRawFixture("sample-shipped.json");
+    expect(problemsFor(record)).toContain("date: is required (YYYY-MM-DD)");
+  });
+
+  it("rejects an unknown outcome", () => {
+    const record = { ...loadRawFixture("sample-shipped.json"), outcome: "done" };
+    expect(problemsFor(record)).toContain(
+      'outcome: must be "shipped", "blocked", or "escalated"',
+    );
+  });
+
+  it("lists every problem, not just the first", () => {
+    const record = loadRawFixture("sample-escalated.json");
+    delete record.reason;
+    delete record.questionForHuman;
+    record.date = "yesterday";
+    const problems = problemsFor(record);
+    expect(problems).toEqual(
+      expect.arrayContaining([
+        'reason: is required when outcome is "escalated"',
+        'questionForHuman: is required when outcome is "escalated"',
+        "date: must be a real calendar date in YYYY-MM-DD format",
+      ]),
+    );
+  });
+});
