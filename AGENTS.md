@@ -46,6 +46,15 @@ Polson is an AI co-founder that ships one verified improvement every night. Each
 - **Applies to:** All work by any agent in this repo.
 - **Why:** Each change stays reviewable and traceable to what was asked, and a human or an explicit gate decides what reaches main.
 
+## Automation
+
+`.github/workflows/polson-agent.yml` runs the builder agent with the instructions in `.github/polson/agent-prompt.md`.
+
+- **Label flow:** a person adds `ready-for-agent`. The workflow swaps it to `agent-working`. The agent ends on `agent-done` (PR opened, a human decides) or `needs-human` (it stopped and explained why). If the job fails, times out, or ends with the issue still `agent-working`, the workflow swaps it to `needs-human` and comments with the run link.
+- **When:** as soon as `ready-for-agent` is added, and nightly at 02:17 Lagos time (01:17 UTC) for the oldest open `ready-for-agent` issue. One job runs at a time, for up to 60 minutes.
+- **Retry limit:** at most 2 fix rounds for review findings, then it escalates.
+- **Never merges:** the agent opens a PR and stops. A person decides what reaches main.
+
 ## Deferred issues
 
 None.
