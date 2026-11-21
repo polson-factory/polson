@@ -51,8 +51,8 @@ Polson is an AI co-founder that ships one verified improvement every night. Each
 `.github/workflows/polson-agent.yml` runs one ticket through scripted phases in a single job. The agent only does judgement work; scripts in `.github/polson/` do the waiting, the looping, and the label decision.
 
 - **Phases:**
-  1. **Resume:** if an open PR already comes from a branch named `<issue>-*`, reuse it and skip the build.
-  2. **Build (agent, `build-prompt.md`):** implement the ticket, run typecheck and tests, push with `push-branch.sh`, open the PR. No waiting.
+  1. **Resume:** if the agent already opened a PR from a branch named `<issue>-*`, reuse it and skip the build. A matching PR from anyone else goes to a person.
+  2. **Build (agent, `build-prompt.md`):** implement the ticket, run typecheck and tests, push with the default branch's copy of `push-branch.sh`, open the PR. No waiting.
   3. **Wait (script, `wait-for-pr.sh`):** poll every 60 seconds, for up to 15 minutes, until both required CI checks have finished on the PR's head commit and Qodo has assessed that commit.
   4. **Resolve (agent, `resolve-prompt.md`):** reproduce or trace each CI failure and Qodo finding, fix valid High or Medium ones, push at most once, and report on the issue.
   5. **Finish (script):** `agent-done` only if CI is green, Qodo finished, and Qodo lists no open High or Medium finding. Otherwise `needs-human`, with the blocker in a comment.

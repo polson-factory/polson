@@ -6,7 +6,8 @@
 # Usage: bash phase.sh <command> <issue> [round]
 #   build-prompt <issue>           write the build prompt to the step output `prompt`
 #   find-pr <issue>                resume check: output next=wait with `pr` and `branch`
-#                                  of the issue's open PR, or next=build if there is none
+#                                  of the issue's open PR, or next=build if there is none.
+#                                  Only a PR opened by the agent ($AGENT_LOGIN) is reused.
 #   after-build <issue>            find the PR the build agent opened; output next=wait|stop
 #   wait <issue> <round>           run wait-for-pr.sh on $PR, pass its outputs on, then
 #                                  gate: output next=resolve (with `prompt`)|finish|stop
@@ -37,6 +38,10 @@ fi
 gh_() { timeout 60 gh "$@"; }
 set_out() { echo "$1=$2" >>"$out"; }
 branch_re="^${issue}-[a-z0-9]+(-[a-z0-9]+)*$"
+# The account the build agent opens PRs as (the Claude GitHub App), as gh reports it.
+agent_login="${AGENT_LOGIN:-app/claude}"
+# The agents push through this trusted copy of the helper, never the checked-out one.
+push_helper="bash $here/push-branch.sh"
 
 # Every check below is explicit: bash ignores `set -e` inside functions called
 # from `||` or `$(...)`, which is how these are called. A failed request exits.
@@ -63,7 +68,7 @@ escalate() {
 # Values substituted into a prompt come from GitHub enums, numbers, and the
 # check names in the workflow, never from issue or PR text.
 safe_value() {
-  [[ "$1" =~ ^[A-Za-z0-9\ .,=_-]*$ ]] || { echo "::error::Unsafe prompt value: $1"; exit 1; }
+  [[ "$1" =~ ^[A-Za-z0-9\ .,=_/-]*$ ]] || { echo "::error::Unsafe prompt value: $1"; exit 1; }
 }
 
 write_prompt() {
@@ -85,20 +90,26 @@ write_prompt() {
 }
 
 # Prints "<number> <branch>" for the issue's open PR into main from a ticket
-# branch in this repository, or nothing. Fails if there is more than one.
+# branch in this repository, or nothing. Returns 3 if there is more than one,
+# and 4 if the one PR was not opened by the agent: its branch could carry code
+# nobody reviewed, and resuming it would run that code with the agent's token.
 find_pr() {
   local list found count
   list=$(gh_ pr list --state open --base main --limit 200 \
-    --json number,headRefName,isCrossRepository) || return 1
+    --json number,headRefName,isCrossRepository,author) || return 1
   found=$(jq -r --arg re "$branch_re" \
-    '.[] | select(.isCrossRepository | not) | select(.headRefName | test($re)) | "\(.number) \(.headRefName)"' \
+    '.[] | select(.isCrossRepository | not) | select(.headRefName | test($re)) | "\(.number) \(.headRefName) \(.author.login)"' \
     <<<"$list") || return 1
   count=$(grep -c . <<<"$found" || true)
   if [ "$count" -gt 1 ]; then
     echo "More than one open PR comes from a ticket branch for #$issue: $(tr '\n' ' ' <<<"$found")" >&2
     return 3
   fi
-  printf '%s' "$found"
+  if [ -n "$found" ] && [ "${found##* }" != "$agent_login" ]; then
+    echo "PR #${found%% *} comes from a ticket branch for #$issue but was opened by ${found##* }, not the agent." >&2
+    return 4
+  fi
+  printf '%s' "${found% *}"
 }
 
 agent_step_ok() {
@@ -124,7 +135,7 @@ pr_head() {
 
 case "$cmd" in
   build-prompt)
-    write_prompt build-prompt.md ISSUE_NUMBER "$issue"
+    write_prompt build-prompt.md ISSUE_NUMBER "$issue" PUSH_HELPER "$push_helper"
     ;;
 
   find-pr)
@@ -132,6 +143,10 @@ case "$cmd" in
     found=$(find_pr) || rc=$?
     if [ "$rc" = 3 ]; then
       escalate "More than one open pull request comes from a ticket branch for this issue, so the agent cannot tell which one to continue. Close the extra ones and relabel."
+      exit 0
+    fi
+    if [ "$rc" = 4 ]; then
+      escalate "An open pull request comes from a ticket branch for this issue but was not opened by the agent, so the agent will not run its code. A person decides: continue it by hand, or close it and relabel."
       exit 0
     fi
     [ "$rc" = 0 ] || exit "$rc"
@@ -153,6 +168,10 @@ case "$cmd" in
     found=$(find_pr) || rc=$?
     if [ "$rc" = 3 ]; then
       escalate "The build phase left more than one open pull request for this issue."
+      exit 0
+    fi
+    if [ "$rc" = 4 ]; then
+      escalate "The open pull request for this issue's ticket branch was not opened by the agent."
       exit 0
     fi
     [ "$rc" = 0 ] || exit "$rc"
@@ -225,7 +244,8 @@ case "$cmd" in
       exit 0
     fi
     write_prompt resolve-prompt.md ISSUE_NUMBER "$issue" PR_NUMBER "$PR" ROUND "$((round + 1))" \
-      CI_RESULT "$CI" CI_DETAIL "$CI_DETAIL" QODO_OPEN "$QODO_OPEN" HEAD_SHA "$HEAD_SHA"
+      CI_RESULT "$CI" CI_DETAIL "$CI_DETAIL" QODO_OPEN "$QODO_OPEN" HEAD_SHA "$HEAD_SHA" \
+      PUSH_HELPER "$push_helper"
     set_out next resolve
     ;;
 

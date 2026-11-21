@@ -33,7 +33,7 @@ This is round {{ROUND}} of at most 2. A round may end with one push of fixes or 
    - Failed check, or valid High or Medium finding: fix it.
    - Not reproducible: add a test that shows the correct behaviour and explain on the pull request (`gh pr comment {{PR_NUMBER}}`) instead of "fixing" it.
    - Low findings: fix them only if the fix is small and clearly right; otherwise note them.
-4. If you changed anything: run `npm run typecheck` and `npm test`, which must both pass, then commit and push once with exactly `bash .github/polson/push-branch.sh {{ISSUE_NUMBER}}`. `git push` itself is not available. If nothing needs fixing, push nothing and say so in your report.
+4. If you changed anything: run `npm run typecheck` and `npm test`, which must both pass, then commit and push once with exactly `{{PUSH_HELPER}} {{ISSUE_NUMBER}}`. `git push` itself is not available. If nothing needs fixing, push nothing and say so in your report.
 5. Check every acceptance criterion against the code as you leave it, with evidence: a test name, a command and its output, or a file and line. Tick only the boxes you verified, by editing the pull request description with `gh pr edit {{PR_NUMBER}} --body`. Keep the rest of the description as it is.
 6. Report: comment on issue #{{ISSUE_NUMBER}} with a heading "Round {{ROUND}} report" and:
    - the pull request link,

@@ -5,7 +5,8 @@
 #
 # Phases, all in one job. The agent only does judgement work; scripts wait, loop,
 # and decide the label. Scripts live in .github/polson/:
-#   resume  phase.sh find-pr: reuse an open PR from a branch named <issue>-*.
+#   resume  phase.sh find-pr: reuse an open PR the agent opened from a branch named
+#           <issue>-*. A matching PR opened by anyone else goes to a person.
 #   build   agent (build-prompt.md): implement, test, push, open the PR. No waiting.
 #   wait    phase.sh wait: wait-for-pr.sh polls CI and Qodo on the PR's head commit
 #           every 60 seconds for up to 15 minutes, then a gate picks the next phase.
@@ -208,9 +209,10 @@ jobs:
       # No WebFetch, WebSearch, curl or similar: only gh and npm reach the network.
       # No `gh api`: it can call any endpoint, including merge and file writes.
       # No sleep: the agent never waits; the wait steps do.
-      # The agent never runs git push. It runs .github/polson/push-branch.sh with
-      # its own issue number, which pushes the current branch to the branch of the
-      # same name, and only if that is a ticket branch (<issue>-<slug>).
+      # The agent never runs git push. It runs the default branch's copy of
+      # push-branch.sh (in runner.temp, not the checked-out file, which a PR branch
+      # could replace) with its own issue number. That pushes the current branch to
+      # the branch of the same name, and only if it is a ticket branch (<issue>-<slug>).
       # These rules narrow what the agent is asked and allowed to run. They are
       # not a sandbox: code the agent runs (npm test) holds the same token. Only
       # GitHub-side rules on main (the protect-main ruleset) can enforce "never
@@ -230,7 +232,7 @@ jobs:
           claude_args: |
             --permission-mode default
             --max-turns 150
-            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(npm ci),Bash(npm install),Bash(npm test),Bash(npm test:*),Bash(npm run typecheck),Bash(npm run report:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git branch:*),Bash(git checkout:*),Bash(git switch:*),Bash(git restore:*),Bash(git add:*),Bash(git commit:*),Bash(bash .github/polson/push-branch.sh ${{ steps.resolve.outputs.number }}),Bash(git pull:*),Bash(git fetch:*),Bash(git rev-parse:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(gh pr create:*),Bash(gh pr view:*)"
+            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(npm ci),Bash(npm install),Bash(npm test),Bash(npm test:*),Bash(npm run typecheck),Bash(npm run report:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git branch:*),Bash(git checkout:*),Bash(git switch:*),Bash(git restore:*),Bash(git add:*),Bash(git commit:*),Bash(bash ${{ runner.temp }}/polson/push-branch.sh ${{ steps.resolve.outputs.number }}),Bash(git pull:*),Bash(git fetch:*),Bash(git rev-parse:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(gh pr create:*),Bash(gh pr view:*)"
             --disallowedTools "WebFetch,WebSearch,Bash(gh api:*),Bash(gh pr merge:*),Bash(git merge:*),Bash(git push:*),Bash(sleep:*),Edit(./.github/**),Write(./.github/**)"
 
       - name: "Build: find the PR the agent opened"
@@ -270,7 +272,7 @@ jobs:
           claude_args: |
             --permission-mode default
             --max-turns 100
-            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(npm ci),Bash(npm install),Bash(npm test),Bash(npm test:*),Bash(npm run typecheck),Bash(npm run report:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git restore:*),Bash(git add:*),Bash(git commit:*),Bash(bash .github/polson/push-branch.sh ${{ steps.resolve.outputs.number }}),Bash(git rev-parse:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh pr edit:*),Bash(gh pr comment:*),Bash(gh run view:*),Bash(gh run list:*)"
+            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(npm ci),Bash(npm install),Bash(npm test),Bash(npm test:*),Bash(npm run typecheck),Bash(npm run report:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git restore:*),Bash(git add:*),Bash(git commit:*),Bash(bash ${{ runner.temp }}/polson/push-branch.sh ${{ steps.resolve.outputs.number }}),Bash(git rev-parse:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh pr edit:*),Bash(gh pr comment:*),Bash(gh run view:*),Bash(gh run list:*)"
             --disallowedTools "WebFetch,WebSearch,Bash(gh api:*),Bash(gh pr merge:*),Bash(git merge:*),Bash(git push:*),Bash(sleep:*),Edit(./.github/**),Write(./.github/**)"
 
       - name: "After round 1: did the agent push a fix?"
@@ -312,7 +314,7 @@ jobs:
           claude_args: |
             --permission-mode default
             --max-turns 100
-            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(npm ci),Bash(npm install),Bash(npm test),Bash(npm test:*),Bash(npm run typecheck),Bash(npm run report:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git restore:*),Bash(git add:*),Bash(git commit:*),Bash(bash .github/polson/push-branch.sh ${{ steps.resolve.outputs.number }}),Bash(git rev-parse:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh pr edit:*),Bash(gh pr comment:*),Bash(gh run view:*),Bash(gh run list:*)"
+            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(npm ci),Bash(npm install),Bash(npm test),Bash(npm test:*),Bash(npm run typecheck),Bash(npm run report:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git restore:*),Bash(git add:*),Bash(git commit:*),Bash(bash ${{ runner.temp }}/polson/push-branch.sh ${{ steps.resolve.outputs.number }}),Bash(git rev-parse:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh pr edit:*),Bash(gh pr comment:*),Bash(gh run view:*),Bash(gh run list:*)"
             --disallowedTools "WebFetch,WebSearch,Bash(gh api:*),Bash(gh pr merge:*),Bash(git merge:*),Bash(git push:*),Bash(sleep:*),Edit(./.github/**),Write(./.github/**)"
 
       - name: "After round 2: did the agent push a fix?"
