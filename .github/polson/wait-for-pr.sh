@@ -9,7 +9,8 @@
 # CI is finished when every required check run from GitHub Actions on the head
 # commit has completed. Qodo is finished when its "PR Summary by Qodo" comment
 # says "Assessed commit <head>", its "Code Review by Qodo" comment carries the
-# head commit's marker, and no "Qodo is busy working" comment remains, on two
+# head commit's marker, and no "Qodo is busy working" comment remains (each told
+# apart by its opening heading), on two
 # polls in a row: Qodo updates its comments in stages, and on PR #10 the summary
 # named a new commit about three minutes before the review listed its findings.
 #
@@ -41,15 +42,40 @@ QODO_LOGIN="qodo-code-review[bot]"
 
 gh_() { timeout 60 gh "$@"; }
 
-qodo_bodies() {
-  gh_ api "repos/$GH_REPO/issues/$pr/comments?per_page=100" --paginate \
-    --jq ".[] | select(.user.login == \"$QODO_LOGIN\") | .body"
+# Qodo's comments are told apart by their opening heading, never by searching the
+# whole body: a summary or review quotes the PR's text and code, which can contain
+# any of these phrases (this script does).
+QODO_KIND='def heading: sub("^\\s+"; "") | split("\n")[0];
+  .[] | select(.user.login == "'"$QODO_LOGIN"'") | .body as $b | ($b | heading) as $h
+  | if ($h | startswith("<h3>Qodo is busy working</h3>")) then "busy"
+    elif ($h | startswith("<h3>PR Summary by Qodo</h3>")) then "summary " + ($b | contains($summary_mark) | tostring)
+    elif ($h | startswith("<h3>Code Review by Qodo</h3>")) then "review " + ($b | contains($review_mark) | tostring)
+    else "other" end'
+
+# Prints one line per Qodo comment: busy, summary true|false, review true|false, or
+# other, where true means the comment names commit $sha.
+qodo_kinds() {
+  local json
+  json=$(gh_ api "repos/$GH_REPO/issues/$pr/comments?per_page=100" --paginate) || return 1
+  jq -rs --arg summary_mark "Assessed commit <a href=\"https://github.com/$GH_REPO/commit/$sha\"" \
+    --arg review_mark "<!-- https://github.com/$GH_REPO/commit/$sha -->" \
+    "add | $QODO_KIND" <<<"$json"
+}
+
+# Prints the body of Qodo's review comment for commit $sha.
+qodo_review_body() {
+  local json
+  json=$(gh_ api "repos/$GH_REPO/issues/$pr/comments?per_page=100" --paginate) || return 1
+  jq -rs --arg login "$QODO_LOGIN" --arg review_mark "<!-- https://github.com/$GH_REPO/commit/$sha -->" \
+    'add | .[] | select(.user.login == $login) | .body
+     | select(sub("^\\s+"; "") | startswith("<h3>Code Review by Qodo</h3>"))
+     | select(contains($review_mark))' <<<"$json"
 }
 
 # One poll. Sets pr_state, sha, ci, ci_detail and the Qodo flags. Returns non-zero
 # if a GitHub call failed, so the caller can retry on the next poll.
 poll_once() {
-  local info runs state name bodies
+  local info runs state name kinds
   info=$(gh_ pr view "$pr" --json state,headRefOid --jq '"\(.state) \(.headRefOid)"') || return 1
   pr_state="${info%% *}"
   sha="${info#* }"
@@ -73,11 +99,11 @@ poll_once() {
     esac
   done
 
-  bodies=$(qodo_bodies) || return 1
+  kinds=$(qodo_kinds) || return 1
   summary=no review=no busy=no
-  if grep -qF "Assessed commit <a href=\"https://github.com/$GH_REPO/commit/$sha\"" <<<"$bodies"; then summary=yes; fi
-  if grep -qF "<!-- https://github.com/$GH_REPO/commit/$sha -->" <<<"$bodies"; then review=yes; fi
-  if grep -qF "Qodo is busy working" <<<"$bodies"; then busy=yes; fi
+  if grep -qx 'summary true' <<<"$kinds"; then summary=yes; fi
+  if grep -qx 'review true' <<<"$kinds"; then review=yes; fi
+  if grep -qx 'busy' <<<"$kinds"; then busy=yes; fi
   return 0
 }
 
@@ -137,8 +163,7 @@ done
 if [ "$pr_state" = "OPEN" ] && [ "$stable" -ge 2 ]; then
   qodo="finished"
   # Qodo's review comment for this head commit; it edits one comment in place.
-  review_body=$(gh_ api "repos/$GH_REPO/issues/$pr/comments?per_page=100" --paginate \
-    --jq ".[] | select(.user.login == \"$QODO_LOGIN\") | select(.body | contains(\"Code Review by Qodo\")) | select(.body | contains(\"<!-- https://github.com/$GH_REPO/commit/$sha -->\")) | .body") || review_body=""
+  review_body=$(qodo_review_body) || review_body=""
   qodo_open=$(printf '%s\n' "$review_body" | bash "$here/qodo-open-findings.sh")
 fi
 
