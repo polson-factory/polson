@@ -53,24 +53,55 @@ jobs:
       github.event_name != 'issues' ||
       (github.event.label.name == 'ready-for-agent' && github.event.sender.type == 'User')
     runs-on: ubuntu-latest
+    # Every step has its own limit, and the limits add up to 58 minutes, so the
+    # final hand-over step always starts before the job's 60 minutes run out.
     timeout-minutes: 60
     steps:
       - name: Check out
+        timeout-minutes: 3
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Node 24
+        timeout-minutes: 3
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           cache: npm
 
       - name: Install
+        timeout-minutes: 5
         run: npm ci
+
+      # Only one job in the polson-agent group runs at a time, so an issue still
+      # labelled agent-working now was left behind by an earlier run that stopped
+      # before it could hand over (for example a hard cancel). Hand it to a person.
+      - name: Hand over issues an earlier run left behind
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          stranded=$(gh issue list --state open --label agent-working --limit 1000 --json number --jq '.[].number')
+          for n in $stranded; do
+            echo "::warning::#$n was left in agent-working by an earlier run. Handing it to a person."
+            # Comment first: if the comment fails, the label stays and the next run retries.
+            if gh issue comment "$n" --body "$(printf '%s\n\n%s' \
+                "Polson's agent found this issue still labelled agent-working with no agent run in progress, so an earlier run stopped without handing it over. This needs a person; check the most recent Polson agent run for this issue." \
+                "Found by: $RUN_URL")"; then
+              gh issue edit "$n" --remove-label agent-working --add-label needs-human \
+                || echo "::warning::Could not relabel #$n; the next run will retry."
+            else
+              echo "::warning::Could not comment on #$n; the next run will retry."
+            fi
+          done
 
       - name: Resolve the issue number
         id: resolve
+        timeout-minutes: 2
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -115,6 +146,7 @@ jobs:
       - name: Build the agent prompt
         id: prompt
         if: steps.resolve.outputs.number != ''
+        timeout-minutes: 1
         env:
           ISSUE_NUMBER: ${{ steps.resolve.outputs.number }}
         run: |
@@ -133,6 +165,7 @@ jobs:
 
       - name: Mark the issue agent-working
         if: steps.resolve.outputs.number != ''
+        timeout-minutes: 1
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -142,8 +175,8 @@ jobs:
       - name: Run the agent
         id: agent
         if: steps.resolve.outputs.number != ''
-        # Leaves time for the final step inside the job's 60 minutes.
-        timeout-minutes: 50
+        # 38 of the job's 60 minutes; see the note on timeout-minutes above.
+        timeout-minutes: 38
         uses: anthropics/claude-code-action@acfe7992852970efb4fee683d63d628e3e52df67 # v1.0.286
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -153,15 +186,22 @@ jobs:
           # --permission-mode default: deny every tool call that --allowedTools does
           # not cover, instead of letting auto mode's safety review decide.
           # No WebFetch, WebSearch, curl or similar: only gh and npm reach the network.
+          # No `gh api`: it can call any endpoint, including merge and file writes.
+          # The agent may push only to its own ticket branch (<issue>-<slug>).
+          # These rules narrow what the agent is asked and allowed to run. They are
+          # not a sandbox: code the agent runs (npm test) holds the same token. Only
+          # GitHub-side rules on main (a ruleset) can enforce "never merge, never
+          # push to main" against that token.
           claude_args: |
             --permission-mode default
             --max-turns 200
-            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(npm ci),Bash(npm install),Bash(npm test),Bash(npm test:*),Bash(npm run typecheck),Bash(npm run report:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git branch:*),Bash(git checkout:*),Bash(git switch:*),Bash(git restore:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git pull:*),Bash(git fetch:*),Bash(git rev-parse:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(gh pr create:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr diff:*),Bash(gh pr edit:*),Bash(gh pr comment:*),Bash(gh run list:*),Bash(gh run view:*),Bash(gh api:*),Bash(sleep:*)"
-            --disallowedTools "WebFetch,WebSearch,Bash(gh pr merge:*),Bash(git merge:*),Bash(git push --force:*),Bash(git push -f:*),Bash(git push --force-with-lease:*),Edit(./.github/**),Write(./.github/**)"
+            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(npm ci),Bash(npm install),Bash(npm test),Bash(npm test:*),Bash(npm run typecheck),Bash(npm run report:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git branch:*),Bash(git checkout:*),Bash(git switch:*),Bash(git restore:*),Bash(git add:*),Bash(git commit:*),Bash(git push -u origin ${{ steps.resolve.outputs.number }}-:*),Bash(git push origin ${{ steps.resolve.outputs.number }}-:*),Bash(git pull:*),Bash(git fetch:*),Bash(git rev-parse:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(gh pr create:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr diff:*),Bash(gh pr edit:*),Bash(gh pr comment:*),Bash(gh run list:*),Bash(gh run view:*),Bash(sleep:*)"
+            --disallowedTools "WebFetch,WebSearch,Bash(gh api:*),Bash(gh pr merge:*),Bash(git merge:*),Bash(git push --force:*),Bash(git push -f:*),Bash(git push --force-with-lease:*),Bash(git push origin main:*),Bash(git push -u origin main:*),Bash(git push origin HEAD:*),Bash(git push -u origin HEAD:*),Edit(./.github/**),Write(./.github/**)"
 
       - name: Hand over to a person if the agent did not finish
         # Runs even when an earlier step failed, timed out, or was cancelled.
         if: always() && steps.resolve.outputs.number != ''
+        timeout-minutes: 3
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -186,6 +226,8 @@ jobs:
             why="The agent step finished without moving the issue to agent-done or needs-human."
           fi
 
-          gh issue edit "$ISSUE_NUMBER" --remove-label agent-working --add-label needs-human
+          # Comment first. If the comment fails, the issue stays agent-working, this
+          # step fails, and the next run's left-behind check hands it over.
           gh issue comment "$ISSUE_NUMBER" --body "$(printf '%s\n\n%s\n\nRun: %s' \
             "Polson's agent stopped without finishing, so this needs a person." "$why" "$RUN_URL")"
+          gh issue edit "$ISSUE_NUMBER" --remove-label agent-working --add-label needs-human

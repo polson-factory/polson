@@ -30,10 +30,10 @@ Always comment on the issue before you swap the label.
 2. Branch: `git checkout main && git pull`, then `git checkout -b {{ISSUE_NUMBER}}-<short-slug>`, where the slug is 2 to 5 lowercase words from the issue title, joined with hyphens.
 3. Implement the acceptance criteria. When you add a test for a rule, break the code briefly to prove the test fails, then restore it (AGENTS.md rule 2). Do these experiments locally; do not push them.
 4. Run `npm run typecheck` and `npm test`. Both must pass before you push.
-5. Commit, push the branch, and open a pull request with `gh pr create --base main`. The description must contain `Closes #{{ISSUE_NUMBER}}`, the ticket link, and the acceptance criteria as an unticked checklist. If you plan any deliberate experiment that will be pushed (for example a temporarily failing commit), say so in the description before you push it.
+5. Commit, push the branch with exactly `git push -u origin {{ISSUE_NUMBER}}-<short-slug>` (pushes to any other branch are refused), and open a pull request with `gh pr create --base main`. The description must contain `Closes #{{ISSUE_NUMBER}}`, the ticket link, and the acceptance criteria as an unticked checklist. If you plan any deliberate experiment that will be pushed (for example a temporarily failing commit), say so in the description before you push it.
 6. Wait for CI and Qodo. Poll every 60 seconds (`sleep 60` between checks), for up to 15 minutes:
    - CI: `gh pr checks <pr>` until every check has finished.
-   - Qodo: read the pull request's comments with `gh api repos/{owner}/{repo}/issues/<pr>/comments`. Qodo posts as `qodo-code-review[bot]`: a "PR Summary by Qodo" comment and a "Code Review by Qodo" comment, which it edits in place. Wait until Qodo has assessed your latest commit and no "Qodo is busy working" comment remains.
+   - Qodo: read the pull request's comments with `gh pr view <pr> --json comments`. Qodo posts as `qodo-code-review`: a "PR Summary by Qodo" comment and a "Code Review by Qodo" comment, which it edits in place. The review comment lists every finding with its severity (High, Medium, Low) and marks fixed ones "Resolved". Wait until Qodo has assessed your latest commit and no "Qodo is busy working" comment remains.
    - If either has not finished after 15 minutes, escalate.
 7. For each Qodo finding, reproduce it or trace it in the code before changing anything (AGENTS.md rule 4).
    - Valid High or Medium: fix it, run typecheck and tests, push, and go back to step 6.
