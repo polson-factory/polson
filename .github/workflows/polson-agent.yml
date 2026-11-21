@@ -1,0 +1,236 @@
+# Lets Polson's agent pick up a ticket without anyone prompting it.
+#
+# Label flow: ready-for-agent -> agent-working -> agent-done (PR opened, a human
+# decides) or needs-human (the agent stopped and needs a person).
+# The agent's instructions live in .github/polson/agent-prompt.md.
+#
+# claude-code-action only runs a workflow that is already on the default branch,
+# so this workflow can only be tested after it is merged.
+name: Polson agent
+
+on:
+  # A person adds ready-for-agent to an issue (filtered in the job's `if`).
+  issues:
+    types: [labeled]
+  # Nightly at 01:17 UTC, which is 02:17 in Lagos (WAT, UTC+1, no daylight saving).
+  schedule:
+    - cron: "17 1 * * *"
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Issue to work on. It must be open and labelled ready-for-agent. Leave empty for the oldest such issue."
+        required: false
+        type: string
+
+# One agent job at a time, across all triggers. A running job is never cancelled.
+# GitHub keeps at most one waiting run per group, and a newer one replaces it. A
+# replaced run never started, so its issue keeps ready-for-agent and the nightly
+# run picks it up later.
+concurrency:
+  group: polson-agent
+  cancel-in-progress: false
+
+# The workflow token (GITHUB_TOKEN) gets only these permissions.
+permissions:
+  # Required by the action's documented setup. The agent pushes its ticket branch
+  # with the Claude GitHub App token, which asks for contents: write itself.
+  contents: write
+  # Required by the action's documented setup, for opening and updating the PR.
+  pull-requests: write
+  # The label swaps and failure comments below use the workflow token.
+  issues: write
+  # Lets the action fetch a GitHub OIDC token and exchange it for the Claude
+  # GitHub App token. Without it the action cannot authenticate to GitHub.
+  id-token: write
+  # Lets the agent read CI results for its PR (paired with additional_permissions).
+  actions: read
+
+jobs:
+  agent:
+    # On `issues` events, run only when a person (not a bot) added ready-for-agent.
+    # Other label changes, including the agent's own, start no job.
+    if: >-
+      github.event_name != 'issues' ||
+      (github.event.label.name == 'ready-for-agent' && github.event.sender.type == 'User')
+    runs-on: ubuntu-latest
+    # Every step has its own limit, and the limits add up to 58 minutes, so the
+    # final hand-over step always starts before the job's 60 minutes run out.
+    timeout-minutes: 60
+    steps:
+      # Runs first and needs only gh, so a failed checkout or install cannot block it.
+      # Only one job in the polson-agent group runs at a time, so an issue still
+      # labelled agent-working now was left behind by an earlier run that stopped
+      # before it could hand over (for example a hard cancel). Hand it to a person.
+      - name: Hand over issues an earlier run left behind
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          stranded=$(gh issue list --state open --label agent-working --limit 1000 --json number --jq '.[].number')
+          for n in $stranded; do
+            echo "::warning::#$n was left in agent-working by an earlier run. Handing it to a person."
+            # Comment first: if the comment fails, the label stays and the next run retries.
+            if gh issue comment "$n" --body "$(printf '%s\n\n%s' \
+                "Polson's agent found this issue still labelled agent-working with no agent run in progress, so an earlier run stopped without handing it over. This needs a person; check the most recent Polson agent run for this issue." \
+                "Found by: $RUN_URL")"; then
+              gh issue edit "$n" --remove-label agent-working --add-label needs-human \
+                || echo "::warning::Could not relabel #$n; the next run will retry."
+            else
+              echo "::warning::Could not comment on #$n; the next run will retry."
+            fi
+          done
+
+      - name: Check out
+        timeout-minutes: 3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node 24
+        timeout-minutes: 3
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install
+        timeout-minutes: 5
+        run: npm ci
+
+      - name: Resolve the issue number
+        id: resolve
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ISSUE: ${{ github.event.issue.number }}
+          INPUT_ISSUE: ${{ inputs.issue_number }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            issues) n="$EVENT_ISSUE" ;;
+            workflow_dispatch) n="${INPUT_ISSUE// /}" ;;
+            *) n="" ;;
+          esac
+
+          if [ -n "$n" ] && ! [[ "$n" =~ ^[1-9][0-9]{0,9}$ ]]; then
+            echo "::error::issue_number must be a positive whole number, got: $n"
+            exit 1
+          fi
+
+          if [ -z "$n" ]; then
+            n=$(gh issue list --state open --label ready-for-agent --limit 1000 \
+              --json number,createdAt --jq 'sort_by(.createdAt) | .[0].number // empty')
+            if [ -z "$n" ]; then
+              echo "No open issue is labelled ready-for-agent. Nothing to do."
+              echo "number=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          # Check the issue's current state: another run may already have taken it.
+          info=$(gh api "repos/$GH_REPO/issues/$n" \
+            --jq '{open: (.state == "open"), pr: (.pull_request != null), ready: ([.labels[].name] | index("ready-for-agent") != null)}')
+          if [ "$(jq -r '.open and (.pr | not) and .ready' <<<"$info")" != "true" ]; then
+            echo "::notice::#$n is not an open issue labelled ready-for-agent ($info). Nothing to do."
+            echo "number=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Working on #$n"
+          echo "number=$n" >> "$GITHUB_OUTPUT"
+
+      - name: Build the agent prompt
+        id: prompt
+        if: steps.resolve.outputs.number != ''
+        timeout-minutes: 1
+        env:
+          ISSUE_NUMBER: ${{ steps.resolve.outputs.number }}
+        run: |
+          set -euo pipefail
+          prompt=$(sed "s/{{ISSUE_NUMBER}}/$ISSUE_NUMBER/g" .github/polson/agent-prompt.md)
+          if grep -q '{{' <<<"$prompt"; then
+            echo "::error::The agent prompt still contains a {{...}} placeholder."
+            exit 1
+          fi
+          delimiter="POLSON_PROMPT_$(openssl rand -hex 16)"
+          {
+            echo "text<<$delimiter"
+            printf '%s\n' "$prompt"
+            echo "$delimiter"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Mark the issue agent-working
+        if: steps.resolve.outputs.number != ''
+        timeout-minutes: 1
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ steps.resolve.outputs.number }}
+        run: gh issue edit "$ISSUE_NUMBER" --remove-label ready-for-agent --add-label agent-working
+
+      - name: Run the agent
+        id: agent
+        if: steps.resolve.outputs.number != ''
+        # 38 of the job's 60 minutes; see the note on timeout-minutes above.
+        timeout-minutes: 38
+        uses: anthropics/claude-code-action@acfe7992852970efb4fee683d63d628e3e52df67 # v1.0.286
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: ${{ steps.prompt.outputs.text }}
+          additional_permissions: |
+            actions: read
+          # --permission-mode default: deny every tool call that --allowedTools does
+          # not cover, instead of letting auto mode's safety review decide.
+          # No WebFetch, WebSearch, curl or similar: only gh and npm reach the network.
+          # No `gh api`: it can call any endpoint, including merge and file writes.
+          # The agent never runs git push. It runs .github/polson/push-branch.sh with
+          # its own issue number, which pushes the current branch to the branch of the
+          # same name, and only if that is a ticket branch (<issue>-<slug>).
+          # These rules narrow what the agent is asked and allowed to run. They are
+          # not a sandbox: code the agent runs (npm test) holds the same token. Only
+          # GitHub-side rules on main (a ruleset) can enforce "never merge, never
+          # push to main" against that token.
+          claude_args: |
+            --permission-mode default
+            --max-turns 200
+            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(npm ci),Bash(npm install),Bash(npm test),Bash(npm test:*),Bash(npm run typecheck),Bash(npm run report:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git branch:*),Bash(git checkout:*),Bash(git switch:*),Bash(git restore:*),Bash(git add:*),Bash(git commit:*),Bash(bash .github/polson/push-branch.sh ${{ steps.resolve.outputs.number }}),Bash(git pull:*),Bash(git fetch:*),Bash(git rev-parse:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(gh pr create:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr diff:*),Bash(gh pr edit:*),Bash(gh pr comment:*),Bash(gh run list:*),Bash(gh run view:*),Bash(sleep:*)"
+            --disallowedTools "WebFetch,WebSearch,Bash(gh api:*),Bash(gh pr merge:*),Bash(git merge:*),Bash(git push:*),Edit(./.github/**),Write(./.github/**)"
+
+      - name: Hand over to a person if the agent did not finish
+        # Runs even when an earlier step failed, timed out, or was cancelled.
+        if: always() && steps.resolve.outputs.number != ''
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ steps.resolve.outputs.number }}
+          JOB_STATUS: ${{ job.status }}
+          AGENT_OUTCOME: ${{ steps.agent.outcome }}
+          SKIPPED: ${{ steps.agent.outputs.skipped_due_to_workflow_validation_mismatch }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          labels=$(gh issue view "$ISSUE_NUMBER" --json labels --jq '.labels[].name')
+          if ! grep -qx 'agent-working' <<<"$labels"; then
+            echo "The issue is no longer agent-working; the agent handed it over itself."
+            exit 0
+          fi
+
+          if [ "$JOB_STATUS" != "success" ]; then
+            why="The agent job ended with status \`$JOB_STATUS\` (agent step: \`${AGENT_OUTCOME:-not run}\`). It failed, timed out, or was cancelled."
+          elif [ "$SKIPPED" = "true" ]; then
+            why="The agent did not run: claude-code-action skipped it because this workflow does not match the copy on the default branch."
+          else
+            why="The agent step finished without moving the issue to agent-done or needs-human."
+          fi
+
+          # Comment first. If the comment fails, the issue stays agent-working, this
+          # step fails, and the next run's left-behind check hands it over.
+          gh issue comment "$ISSUE_NUMBER" --body "$(printf '%s\n\n%s\n\nRun: %s' \
+            "Polson's agent stopped without finishing, so this needs a person." "$why" "$RUN_URL")"
+          gh issue edit "$ISSUE_NUMBER" --remove-label agent-working --add-label needs-human
