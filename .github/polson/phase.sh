@@ -93,16 +93,37 @@ write_prompt() {
 # branch in this repository, or nothing. Returns 3 if there is more than one,
 # and 4 if the one PR was not opened by the agent: its branch could carry code
 # nobody reviewed, and resuming it would run that code with the agent's token.
+#
+# One jq call finds the matching PRs and counts them: its first line is the
+# count, and each further line is "<number> <branch> <author>". A count that is
+# not a whole number (jq failed, or gh printed nothing, which jq turns into no
+# output at all) returns 1 instead of being read as "no PR" (AGENTS.md rule 6).
 find_pr() {
-  local list found count
+  local list result count found
   list=$(gh_ pr list --state open --base main --limit 200 \
     --json number,headRefName,isCrossRepository,author) || return 1
-  found=$(jq -r --arg re "$branch_re" \
-    '.[] | select(.isCrossRepository | not) | select(.headRefName | test($re)) | "\(.number) \(.headRefName) \(.author.login)"' \
-    <<<"$list") || return 1
-  count=$(grep -c . <<<"$found" || true)
+  result=$(jq -r --arg re "$branch_re" '
+    [.[] | select(.isCrossRepository | not) | select(.headRefName | test($re))
+         | "\(.number) \(.headRefName) \(.author.login)"]
+    | (length | tostring), .[]' <<<"$list") || return 1
+  # Split with bash's own parameter expansion: no external command that could
+  # fail silently and leave the PR lines empty while the count still reads.
+  count=${result%%$'\n'*}
+  found=""
+  if [ "$result" != "$count" ]; then found=${result#*$'\n'}; fi
+  if ! [[ "$count" =~ ^[0-9]+$ ]]; then
+    echo "Could not count the open PRs for #$issue: gh pr list returned no readable list." >&2
+    return 1
+  fi
+  # The PR lines must match jq's count. Anything else is unknown, not "no PR".
+  local lines=0 joined=${found//$'\n'/}
+  if [ -n "$found" ]; then lines=$(( ${#found} - ${#joined} + 1 )); fi
+  if [ "$lines" -ne "$count" ]; then
+    echo "Could not read the open PRs for #$issue: jq counted $count but $lines PR line(s) arrived." >&2
+    return 1
+  fi
   if [ "$count" -gt 1 ]; then
-    echo "More than one open PR comes from a ticket branch for #$issue: $(tr '\n' ' ' <<<"$found")" >&2
+    echo "More than one open PR comes from a ticket branch for #$issue: ${found//$'\n'/ }" >&2
     return 3
   fi
   if [ -n "$found" ] && [ "${found##* }" != "$agent_login" ]; then
