@@ -53,6 +53,18 @@ Polson is an AI co-founder that ships one verified improvement every night. Each
 - **Applies to:** Everything under `src/` and the scripts in `.github/polson/`.
 - **Why:** The most frequent defect in Polson's history. Qodo found it four times (PR #7 dangling symlinks, PR #8 EPERM read as "no hard links", PR #10 a failed comment treated as success, PR #14 `|| true` hiding label API failures), and the coding agent caught three more in PR #12. A factory that guesses "absent" or "finished" ships slop.
 
+## Quality gate (definition of done)
+
+Applies to every PR and every agent run, together with rule 4.
+
+- **Labels:** Qodo's High is "Action required" (`action_required`, the High badge) and Medium is "Remediation recommended" (`remediation_recommended`, the Medium badge), as seen on PRs #1, #10, #12, #14 and #20. Low is "Informational" (`informational`, the Low badge), as seen on PR #21. Treat any other or unreadable label as Medium until a human says otherwise.
+- **Fix** every valid High or Medium finding, of every type (Bug, Rule violation, Requirement gap). Valid means reproduced or traced in the code.
+- **Disagree with evidence:** a High or Medium finding you believe is wrong is not fixed. Answer it with evidence (file:line, a test, or command output) and flag it for the human. It blocks "done" until the human accepts it by dismissing the finding in Qodo; the workflow counts a "✗ Dismissed" finding as closed (`qodo-open-findings.sh`).
+- **Low:** leave unchanged and list every one in the final report for the human.
+- **Recheck:** after fixes, rerun typecheck, tests and review. For a PR, the latest completed Qodo review must cover the head commit.
+- **Stop:** after 2 fix rounds, or a round that makes no progress, report the task as NOT DONE with the blocker.
+- **Done** only when no valid High or Medium finding is open, typecheck and tests pass, the latest review covers the final code, and every Low finding is listed.
+
 ## Automation
 
 `.github/workflows/polson-agent.yml` runs one ticket through scripted phases in a single job. The agent only does judgement work; scripts in `.github/polson/` do the waiting, the looping, and the label decision.
