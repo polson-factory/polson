@@ -191,7 +191,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ steps.resolve.outputs.number }}
-        run: gh issue edit "$ISSUE_NUMBER" --remove-label ready-for-agent --add-label agent-working
+        run: |
+          # Clear outcome labels a previous run left behind (absent ones are fine),
+          # so this run's ending is the only one on the issue.
+          for stale in needs-human agent-done; do
+            gh issue edit "$ISSUE_NUMBER" --remove-label "$stale" >/dev/null 2>&1 || true
+          done
+          gh issue edit "$ISSUE_NUMBER" --remove-label ready-for-agent --add-label agent-working
 
       # Phase: resume. An earlier run may have opened the PR already.
       - name: "Resume check: reuse an open PR for this issue"
