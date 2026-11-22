@@ -191,7 +191,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ steps.resolve.outputs.number }}
-        run: gh issue edit "$ISSUE_NUMBER" --remove-label ready-for-agent --add-label agent-working
+        run: |
+          set -euo pipefail
+          # Clear outcome labels a previous run left behind, so this run's ending is
+          # the only one on the issue. Only labels that are present are removed, all
+          # in the same edit as the swap; any failed GitHub call fails the step.
+          labels=$(gh issue view "$ISSUE_NUMBER" --json labels --jq '.labels[].name')
+          args=(--remove-label ready-for-agent --add-label agent-working)
+          for stale in needs-human agent-done; do
+            if grep -qx "$stale" <<<"$labels"; then args+=(--remove-label "$stale"); fi
+          done
+          gh issue edit "$ISSUE_NUMBER" "${args[@]}"
 
       # Phase: resume. An earlier run may have opened the PR already.
       - name: "Resume check: reuse an open PR for this issue"
