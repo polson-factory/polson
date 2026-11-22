@@ -46,6 +46,12 @@ Polson is an AI co-founder that ships one verified improvement every night. Each
 - **Applies to:** All work by any agent in this repo.
 - **Why:** Each change stays reviewable and traceable to what was asked, and a human or an explicit gate decides what reaches main.
 
+### 6. The No Guessing Rule
+
+- **Rule:** Treat an error or unreadable input as a known state ("absent", "unsupported", "no PR", "finished") only when the code checks for that specific case, for example ENOENT for "absent". Anything else is "unknown" and fails closed: stop, report it, or escalate. Do not swallow failures with `|| true`, `2>/dev/null`, or a catch that returns a success value, unless a comment on that line names the one failure being ignored and why it is harmless.
+- **Applies to:** Everything under `src/` and the scripts in `.github/polson/`.
+- **Why:** The most frequent defect in Polson's history. Qodo found it four times (PR #7 dangling symlinks, PR #8 EPERM read as "no hard links", PR #10 a failed comment treated as success, PR #14 `|| true` hiding label API failures), and the coding agent caught three more in PR #12. A factory that guesses "absent" or "finished" ships slop.
+
 ## Automation
 
 `.github/workflows/polson-agent.yml` runs one ticket through scripted phases in a single job. The agent only does judgement work; scripts in `.github/polson/` do the waiting, the looping, and the label decision.
