@@ -166,6 +166,10 @@ export async function runReport(args: string[], io: CliIo): Promise<number> {
 
   // Only for the wording of the success message; the write itself decides
   // atomically whether a report already exists (see atomic-write.ts).
+  // Accepted case: probe() returns an error (not "present"), so replacing is
+  // false and the message below says "Wrote". That is harmless: the errors
+  // that stop lstat (for example EACCES or ELOOP) also stop the write, which
+  // then reports "Could not write" and exits 1, so "Wrote" is never printed.
   const replacing = force && (await probe(reportPath)) === "present";
 
   let outcome;
