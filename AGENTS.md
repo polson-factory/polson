@@ -57,7 +57,7 @@ Polson is an AI co-founder that ships one verified improvement every night. Each
 
 Applies to every PR and every agent run, together with rule 4.
 
-- **Labels:** Qodo's High is "Action required" (`action_required`, the High badge) and Medium is "Remediation recommended" (`remediation_recommended`, the Medium badge), as seen on PRs #1, #10, #12, #14 and #20. Low is "Informational" (`informational`, the Low badge), as seen on PR #21. Treat any other or unreadable label as Medium until a human says otherwise.
+- **Labels:** Qodo's High is "Action required" (`action_required`, the High badge) and Medium is "Remediation recommended" (`remediation_recommended`, the Medium badge), as seen on PRs #1, #10, #12, #14 and #20. Low is "Informational" (`informational`, the Low badge), as seen on PR #21. Any other, missing or unreadable label makes the review unknown, so the run stops and a human decides (rule 6).
 - **Fix** every valid High or Medium finding, of every type (Bug, Rule violation, Requirement gap). Valid means reproduced or traced in the code.
 - **Disagree with evidence:** a High or Medium finding you believe is wrong is not fixed. Answer it with evidence (file:line, a test, or command output) and flag it for the human. It blocks "done" until the human accepts it by dismissing the finding in Qodo; the workflow counts a "✗ Dismissed" finding as closed (`qodo-open-findings.sh`).
 - **Low:** leave unchanged and list every one in the final report for the human.
