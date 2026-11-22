@@ -32,6 +32,13 @@ describe("qodo-open-findings.sh on real Qodo comments", () => {
   it('reports 0 for "no issues found" (PR #15)', () => {
     expect(run(fixture("pr15-no-issues.md"))).toBe("0");
   });
+
+  // PR #24's own review quotes "Resolved findings", "no issues found" and a
+  // `<summary>  1.` line inside its findings. The quoted text must not be read as
+  // structure. Its second finding is labelled by Qodo's "View medium (1)" header.
+  it("counts both open Medium findings, ignoring quoted markup (PR #24)", () => {
+    expect(run(fixture("pr24-open-two-medium.md"))).toBe("2");
+  });
 });
 
 describe("qodo-open-findings.sh fails closed", () => {
@@ -45,6 +52,24 @@ describe("qodo-open-findings.sh fails closed", () => {
 
   it("reports unknown when the count badge says more findings than are listed", () => {
     expect(run(open.replace("Requirement gaps (1)", "Requirement gaps (2)"))).toBe("unknown");
+  });
+
+  // A comment cut short can still have count badges that match the findings it
+  // lists. Only Qodo's footer shows the comment is complete.
+  it('reports unknown for PR #20 cut before "Resolved findings"', () => {
+    expect(run(open.slice(0, open.indexOf("<details><summary><strong>Resolved findings")))).toBe("unknown");
+  });
+
+  it("reports unknown for PR #20 cut three lines into finding 1", () => {
+    const lines = open.split("\n");
+    const summary = lines.findIndex((line) => line.startsWith("<summary>  1.  Agent"));
+    expect(summary).toBeGreaterThan(0);
+    expect(run(lines.slice(0, summary + 4).join("\n"))).toBe("unknown");
+  });
+
+  it('reports unknown for PR #15 cut before "no issues found"', () => {
+    const body = fixture("pr15-no-issues.md");
+    expect(run(body.slice(0, body.indexOf("<h3>Great, no issues found!")))).toBe("unknown");
   });
 
   it("reports unknown for a resolved-only comment cut before the resolved section", () => {
@@ -66,5 +91,44 @@ describe("qodo-open-findings.sh fails closed", () => {
 
   it("reports unknown for a comment that is not Qodo's review", () => {
     expect(run(open.replace("Code Review by Qodo", "Something else"))).toBe("unknown");
+  });
+});
+
+// Each open finding needs its own severity label (a severity badge or Qodo's
+// "View <severity> (N)" header) between the previous finding and itself. A finding
+// must never take the severity of the one before it (Qodo on PR #24, rule 6).
+describe("qodo-open-findings.sh: an unlabelled finding makes the review unknown", () => {
+  const open = fixture("pr20-open-medium.md");
+  const LOW_BADGE =
+    '<img src="https://img.shields.io/badge/Low-634FD1?style=flat-square" height="20px" alt="Informational">';
+  const MEDIUM_BADGE =
+    '<img src="https://img.shields.io/badge/Medium-634FD1?style=flat-square" height="20px" alt="Remediation recommended">';
+
+  /** PR #20 with a second open finding after the first, preceded by `label`. */
+  function withSecondFinding(body: string, label: string): string {
+    const second = `${label}\n<details>\n<summary>  2.  Second finding <code>📎 Requirement gap</code></summary>\n</details>\n\n`;
+    const at = body.indexOf("<details><summary><strong>Resolved findings");
+    expect(at).toBeGreaterThan(0);
+    return (body.slice(0, at) + second + body.slice(at)).replace("Requirement gaps (1)", "Requirement gaps (2)");
+  }
+
+  it("after a Medium finding", () => {
+    expect(run(withSecondFinding(open, ""))).toBe("unknown");
+  });
+
+  it("after a Low finding: never counted as Low", () => {
+    expect(run(withSecondFinding(open.replace(MEDIUM_BADGE, LOW_BADGE), ""))).toBe("unknown");
+  });
+
+  it("under a severity badge the script does not know (#22)", () => {
+    const critical = MEDIUM_BADGE.replace("Medium-", "Critical-");
+    expect(run(withSecondFinding(open, critical))).toBe("unknown");
+  });
+
+  // Control: the same second finding with its own label is counted, so the cases
+  // above report unknown because of the missing label, not the edit.
+  it('control: counts it when Qodo\'s "View medium (1)" header labels it', () => {
+    const view = "<details><summary><ins><strong>View medium (1)</strong></ins></summary><br/>";
+    expect(run(withSecondFinding(open, view))).toBe("2");
   });
 });
