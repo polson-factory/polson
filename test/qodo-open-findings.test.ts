@@ -72,6 +72,23 @@ describe("qodo-open-findings.sh fails closed", () => {
     expect(run(body.slice(0, body.indexOf("<h3>Great, no issues found!")))).toBe("unknown");
   });
 
+  // Qodo on PR #24 ("Truncated comment reports a count"): a comment cut anywhere
+  // before its footer must never print a count, whatever the badges say.
+  it.each(["pr15-no-issues.md", "pr19-all-resolved.md", "pr20-open-medium.md", "pr24-open-two-medium.md"])(
+    "reports unknown for %s cut after any line before the footer",
+    (name) => {
+      const lines = fixture(name).split("\n");
+      const footer = lines.findIndex((line) => line.startsWith('<a href="https://www.qodo.ai"><img'));
+      expect(footer).toBeGreaterThan(0);
+      const counted = [];
+      for (let keep = 1; keep <= footer; keep++) {
+        if (run(lines.slice(0, keep).join("\n")) !== "unknown") counted.push(keep);
+      }
+      expect(counted, "line counts that still printed a number").toEqual([]);
+    },
+    30_000,
+  );
+
   it("reports unknown for a resolved-only comment cut before the resolved section", () => {
     const body = fixture("pr19-all-resolved.md");
     expect(run(body.slice(0, body.indexOf("Resolved findings")))).toBe("unknown");
