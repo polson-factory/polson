@@ -167,6 +167,14 @@ describe("qodo-record.sh", () => {
       { name: "a complete record followed by unreadable output", json: `${record(run())}\n}{ not json`, exit: 0, state: "unknown" },
       { name: "two records in one output", json: `${record(run())}\n${record(run())}`, exit: 0, state: "unknown" },
       { name: "completed but not complete", json: record(run({ review_complete: false })), exit: 0, state: "incomplete" },
+      // The shape of Qodo's real runs on PR #27 (f9c4612, 5466a58) and PR #20: not a
+      // skip, yet review_complete false. Undocumented, so not a review (rule 6).
+      {
+        name: "completed extended review with review_complete false (PR #27)",
+        json: record(run({ review_effort: "extended", review_complete: false })),
+        exit: 0,
+        state: "incomplete",
+      },
     ])("$name: run=$state", ({ json, exit, state }) => {
       const r = read(json, exit);
 

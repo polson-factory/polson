@@ -16,6 +16,15 @@
 # Only run=complete is a review. The verify-qodo job decides; this script never
 # calls GitHub, and its job's token can only read contents.
 #
+# Why review_complete must be true, not only status "completed" and effort not
+# "skip": Qodo's own guidance (qodo-ai/qodo-skills, qodo-review-cockpit) is "Only
+# call Qodo review complete with completed status, review_complete=true and
+# matching current HEAD evidence". Neither the CLI's schema nor Qodo's docs say
+# what review_complete=false means on a run that was not skipped. In this repo's
+# record (PRs #1 to #27, 39 runs) every skip had it false, and so did 4 completed
+# lite, standard or extended runs (PR #20 and PR #27). An undocumented "false" is
+# unknown, not reviewed (AGENTS.md rule 6): those tickets go to a person.
+#
 # The Qodo CLI runs with an allowlist of environment variables (qodo_env), so it
 # never receives GH_TOKEN, GITHUB_TOKEN or the ACTIONS_* token variables.
 set -euo pipefail
