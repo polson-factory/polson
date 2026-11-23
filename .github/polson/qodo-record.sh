@@ -64,16 +64,18 @@ qodo_env() {
 # --pr-url on every read (issue #37, run 45156397208). This fetches the catalog,
 # which needs the key, then checks it has the read-only findings command with the
 # pr_url and extended parameters. If either fails it says why and returns 1: the
-# record is then not read, so the run is unknown (AGENTS.md rule 6).
+# record is then not read, so the run is unknown (AGENTS.md rule 6). Each call has
+# 30 seconds, so every attempt fits the workflow step's limit
+# (test/agent-workflow.test.ts).
 catalog_ready() {
   local out help
-  if ! out=$(qodo_env timeout 60 qodo tools --refresh --json); then
+  if ! out=$(qodo_env timeout 30 qodo tools --refresh --json); then
     echo "::error::The Qodo CLI could not fetch its tool catalog, so Qodo's review record was not read. The CLI said: ${out:0:300}" >&2
     return 1
   fi
   # -s reads the whole output as one array: anything but exactly one document is
   # not the command's help.
-  if ! help=$(qodo_env timeout 60 qodo tools help pr-review-session findings --json) ||
+  if ! help=$(qodo_env timeout 30 qodo tools help pr-review-session findings --json) ||
     ! jq -se 'length == 1 and (.[0]
       | .kind == "qodo-managed-tool-catalog" and .toolCount == 1 and (.tools | length) == 1
       and (.tools[0] | .name == "get-pr-review-findings"
