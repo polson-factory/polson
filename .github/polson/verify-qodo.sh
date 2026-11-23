@@ -9,8 +9,10 @@
 # ROUNDS; from the qodo-record job: QODO_RUN, QODO_EFFORT. Optional: CHECK_ONLY=1
 # prints the decision and never reads or changes the issue (for a local check).
 #
-# Right before it writes, it reads the issue's labels and the PR, with nothing in
-# between. The ticket is reviewed only if:
+# It reads the issue's labels and the PR right before it decides, and again right
+# before it sets agent-done (after the success comment). GitHub has no atomic label
+# update, so the last read narrows the window to the label edit itself. The ticket
+# is reviewed only if:
 #   - it is still agent-working (a person may have taken it),
 #   - the PR is still open and its head is still HEAD_SHA, and
 #   - QODO_RUN is "complete": Qodo's latest run is a completed, complete,
@@ -60,21 +62,27 @@ not_reviewed() {
   exit 0
 }
 
-if [ -z "$check_only" ]; then
-  labels=$(gh_ issue view "$issue" --json labels --jq '.labels[].name') \
-    || { echo "::error::Could not read the labels of #$issue." >&2; exit 1; }
-  if ! grep -qx 'agent-working' <<<"$labels"; then
-    echo "#$issue is no longer agent-working; nothing to decide."
-    exit 0
+# Sets working (yes or no), pr_state and head from fresh reads. A failed read exits.
+read_ticket() {
+  working=yes
+  if [ -z "$check_only" ]; then
+    labels=$(gh_ issue view "$issue" --json labels --jq '.labels[].name') \
+      || { echo "::error::Could not read the labels of #$issue." >&2; exit 1; }
+    grep -qx 'agent-working' <<<"$labels" || working=no
   fi
-fi
+  info=$(gh_ pr view "$PR" --json state,headRefOid --jq '"\(.state) \(.headRefOid)"') \
+    || { echo "::error::Could not read PR #$PR." >&2; exit 1; }
+  pr_state="${info%% *}"
+  head="${info#* }"
+}
 
+read_ticket
+if [ "$working" = no ]; then
+  echo "#$issue is no longer agent-working; nothing to decide."
+  exit 0
+fi
 # The agent job checked HEAD_SHA, and Qodo's record was read for it. Nothing may
 # have changed since.
-info=$(gh_ pr view "$PR" --json state,headRefOid --jq '"\(.state) \(.headRefOid)"') \
-  || { echo "::error::Could not read PR #$PR." >&2; exit 1; }
-pr_state="${info%% *}"
-head="${info#* }"
 echo "PR #$PR: state $pr_state, head ${head:0:7}; checked $short. Qodo's latest run: $run, review effort: $effort."
 if [ "$pr_state" != "OPEN" ] || [ "$head" != "$HEAD_SHA" ]; then
   not_reviewed "Pull request #$PR changed after the agent job checked $short (now: state $pr_state, head ${head:0:7}), so its checks no longer apply."
@@ -104,6 +112,17 @@ The agent's latest report above lists each acceptance criterion with its evidenc
 Run: $run_url
 COMMENT
 )" || { echo "::error::Could not comment on #$issue; leaving it agent-working." >&2; exit 1; }
+# The comment took a request: read again right before the label changes.
+read_ticket
+if [ "$working" = no ]; then
+  gh_ issue comment "$issue" --body "A person changed this ticket's labels while Polson was verifying it, so Polson left them as they are. The comment above describes the checks of $short only." \
+    || { echo "::error::Could not comment on #$issue." >&2; exit 1; }
+  echo "#$issue is no longer agent-working; labels left as they are."
+  exit 0
+fi
+if [ "$pr_state" != "OPEN" ] || [ "$head" != "$HEAD_SHA" ]; then
+  not_reviewed "Pull request #$PR changed while Polson was verifying $short (now: state $pr_state, head ${head:0:7}). The comment above no longer applies."
+fi
 gh_ issue edit "$issue" --remove-label agent-working --add-label agent-done \
   || { echo "::error::Could not relabel #$issue." >&2; exit 1; }
 echo "Reviewed: agent-done."

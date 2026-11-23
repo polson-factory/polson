@@ -543,5 +543,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           ISSUE_NUMBER: ${{ needs.agent.outputs.issue }}
+          AGENT_RESULT: ${{ needs.agent.result }}
+          QODO_RECORD_RESULT: ${{ needs.qodo-record.result }}
           VERIFY_RESULT: ${{ needs.verify-qodo.result }}
         run: bash .github/polson/hand-over.sh final "$ISSUE_NUMBER"

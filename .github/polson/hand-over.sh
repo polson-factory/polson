@@ -7,9 +7,10 @@
 #          CANDIDATE. After candidate-done (CANDIDATE=true and the job succeeded),
 #          the verify-qodo job decides, so the ticket is left alone. Otherwise a
 #          ticket still agent-working is handed over, as before.
-#   final  the hand-over job, which always runs after verify-qodo. Env:
-#          VERIFY_RESULT. A ticket still agent-working means verify-qodo did not
-#          start, failed or was cancelled: it is handed over.
+#   final  the hand-over job, which always runs after the other jobs. Env:
+#          AGENT_RESULT, QODO_RECORD_RESULT, VERIFY_RESULT (each job's result). A
+#          ticket still agent-working means one of them did not start, failed or was
+#          cancelled: it is handed over, with every job's result in the comment.
 # Needs GH_TOKEN, GH_REPO and RUN_URL.
 #
 # Comment first. If the comment fails, the issue stays agent-working, this step
@@ -40,9 +41,13 @@ if [ "$stage" = agent ]; then
     why="The run finished without moving the issue to agent-done or needs-human (${STEPS:-})."
   fi
 else
-  result="${VERIFY_RESULT:-unknown}"
-  [[ "$result" =~ ^[a-z_]{1,20}$ ]] || result="unknown"
-  why="The verify-qodo job did not finish (result: \`$result\`), so nothing confirmed that Qodo reviewed the pull request."
+  # Job results are GitHub's words (success, failure, cancelled, skipped).
+  result_of() {
+    local value="${1:-unknown}"
+    [[ "$value" =~ ^[a-z_]{1,20}$ ]] || value="unknown"
+    printf '%s' "$value"
+  }
+  why="The run did not finish: agent \`$(result_of "${AGENT_RESULT:-}")\`, qodo-record \`$(result_of "${QODO_RECORD_RESULT:-}")\`, verify-qodo \`$(result_of "${VERIFY_RESULT:-}")\`. Nothing confirmed that Qodo reviewed the pull request."
 fi
 
 gh issue comment "$issue" --body "$(printf '%s\n\n%s\n\nRun: %s' \

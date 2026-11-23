@@ -82,15 +82,25 @@ describe("hand-over.sh", () => {
   it.each(["skipped", "failure", "cancelled"])(
     "verify-qodo %s, ticket still agent-working: the final job hands it over",
     (result) => {
-      const r = handOver("final", { VERIFY_RESULT: result });
+      const r = handOver("final", { AGENT_RESULT: "success", QODO_RECORD_RESULT: "success", VERIFY_RESULT: result });
 
       expect(r.status, r.stderr).toBe(0);
       expect(r.edits).toEqual([NEEDS_HUMAN]);
       expect(r.comments).toHaveLength(1);
-      expect(r.comments[0]).toContain(`The verify-qodo job did not finish (result: \`${result}\`)`);
+      expect(r.comments[0]).toContain(`verify-qodo \`${result}\``);
       expect(r.issueLog.indexOf("COMMENT")).toBeLessThan(r.issueLog.indexOf("EDIT"));
     },
   );
+
+  // Qodo on PR #27 (f9c4612): the comment named only verify-qodo, which reads
+  // "skipped" when an earlier job failed.
+  it("names the job that failed: qodo-record failure, verify-qodo skipped", () => {
+    const r = handOver("final", { AGENT_RESULT: "success", QODO_RECORD_RESULT: "failure", VERIFY_RESULT: "skipped" });
+
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.edits).toEqual([NEEDS_HUMAN]);
+    expect(r.comments[0]).toContain("agent `success`, qodo-record `failure`, verify-qodo `skipped`");
+  });
 
   it.each(["agent", "final"] as const)("%s: a ticket no longer agent-working is left alone", (stage) => {
     const r = handOver(stage, { STUB_LABELS: "agent-done", JOB_STATUS: "failure", VERIFY_RESULT: "failure", STEPS });

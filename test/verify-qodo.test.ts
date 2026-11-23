@@ -17,12 +17,21 @@ const PR = 27;
 const HEAD = "6f8be2ca1c3504bfe619e9df9083c276c93eba78";
 const OLDER = "ecced4dd964de436dbb17701744cf8e017d66e4e";
 
-// Every gh and qodo call goes to one log, in order. The PR's state and head come
-// from $STUB_PR; issue #9 is agent-working unless $STUB_LABELS says otherwise.
+// Every gh and qodo call goes to one log, in order. The first read of the PR prints
+// $STUB_PR and later reads $STUB_PR_LATER (default: the same); issue #9's labels are
+// $STUB_LABELS (default agent-working), and $STUB_LABELS_LATER on later reads.
 const STUB_GH = `#!/usr/bin/env bash
 case "$*" in
-  "pr view ${PR} --json state,headRefOid --jq "*) echo "gh pr view" >> "$HOME/calls.log"; cat "$STUB_PR"; exit 0 ;;
-  "issue view ${ISSUE} --json labels --jq "*) echo "gh issue view" >> "$HOME/calls.log"; printf '%s\\n' "\${STUB_LABELS:-agent-working}"; exit 0 ;;
+  "pr view ${PR} --json state,headRefOid --jq "*)
+    echo "gh pr view" >> "$HOME/calls.log"
+    if [ -e "$HOME/pr-read" ]; then cat "\${STUB_PR_LATER:-$STUB_PR}"; else touch "$HOME/pr-read"; cat "$STUB_PR"; fi
+    exit 0 ;;
+  "issue view ${ISSUE} --json labels --jq "*)
+    echo "gh issue view" >> "$HOME/calls.log"
+    labels="\${STUB_LABELS:-agent-working}"
+    if [ -e "$HOME/labels-read" ]; then labels="\${STUB_LABELS_LATER:-$labels}"; else touch "$HOME/labels-read"; fi
+    printf '%s\\n' "$labels"
+    exit 0 ;;
   "issue comment ${ISSUE} --body "*) echo "gh issue comment" >> "$HOME/calls.log"; { echo "COMMENT"; printf '%s\\n' "$5"; echo "END"; } >> "$STUB_LOG"; exit 0 ;;
   "issue edit ${ISSUE} "*) echo "gh issue edit" >> "$HOME/calls.log"; echo "EDIT \${*:4}" >> "$STUB_LOG"; exit 0 ;;
 esac
@@ -60,12 +69,15 @@ describe("verify-qodo.sh", () => {
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
-  type Options = { prState?: string; prHead?: string; env?: Record<string, string> };
+  type Options = { prState?: string; prHead?: string; laterPrHead?: string; env?: Record<string, string> };
 
   /** Runs verify-qodo.sh for issue #9 after the qodo-record job reported `run` and `effort`. */
-  function verify(run: string, effort: string, { prState = "OPEN", prHead = HEAD, env = {} }: Options = {}) {
+  function verify(run: string, effort: string, { prState = "OPEN", prHead = HEAD, laterPrHead, env = {} }: Options = {}) {
     const log = join(dir, "issue.log");
     writeFileSync(join(dir, "pr.txt"), `${prState} ${prHead}\n`);
+    writeFileSync(join(dir, "pr-later.txt"), `${prState} ${laterPrHead ?? prHead}\n`);
+    rmSync(join(dir, "pr-read"), { force: true });
+    rmSync(join(dir, "labels-read"), { force: true });
     writeFileSync(log, "");
     writeFileSync(join(dir, "calls.log"), "");
     const result = spawnSync("bash", [VERIFY, String(ISSUE)], {
@@ -84,6 +96,7 @@ describe("verify-qodo.sh", () => {
         QODO_RUN: run,
         QODO_EFFORT: effort,
         STUB_PR: join(dir, "pr.txt"),
+        STUB_PR_LATER: join(dir, "pr-later.txt"),
         STUB_LOG: log,
         ...env,
       },
@@ -159,11 +172,40 @@ describe("verify-qodo.sh", () => {
     });
 
     // Local Qodo review of the two-job design: the labels and head were read once,
-    // before minutes of polling Qodo, and not again before the label changed.
-    it("nothing runs between reading the labels and head and writing the issue", () => {
+    // before minutes of polling Qodo. Qodo on PR #27 (f9c4612): and not again after
+    // the success comment, right before agent-done. GitHub has no atomic label
+    // update, so the last read comes right before the edit.
+    it("reads the labels and head again right before setting agent-done", () => {
       const r = verify("complete", "lite");
 
-      expect(r.calls).toEqual(["gh issue view", "gh pr view", "gh issue comment", "gh issue edit"]);
+      expect(r.calls).toEqual([
+        "gh issue view",
+        "gh pr view",
+        "gh issue comment",
+        "gh issue view",
+        "gh pr view",
+        "gh issue edit",
+      ]);
+    });
+
+    it("a new commit while verifying: no agent-done; a follow-up comment, then needs-human", () => {
+      const r = verify("complete", "lite", { laterPrHead: OLDER });
+
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.edits).toEqual([NEEDS_HUMAN]);
+      expect(r.comments).toHaveLength(2);
+      expect(r.comments[0]).toContain("Polson's checks passed");
+      expect(r.comments[1]).toContain(`changed while Polson was verifying ${HEAD.slice(0, 7)}`);
+      expect(r.issueLog.lastIndexOf("COMMENT")).toBeLessThan(r.issueLog.indexOf("EDIT"));
+    });
+
+    it("a person takes the ticket while verifying: no agent-done, labels left alone", () => {
+      const r = verify("complete", "lite", { env: { STUB_LABELS_LATER: "needs-human" } });
+
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.edits).toEqual([]);
+      expect(r.comments).toHaveLength(2);
+      expect(r.comments[1]).toContain("A person changed this ticket's labels while Polson was verifying it");
     });
   });
 
