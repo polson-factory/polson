@@ -39,6 +39,57 @@ describe("qodo-open-findings.sh on real Qodo comments", () => {
   it("counts both open Medium findings, ignoring quoted markup (PR #24)", () => {
     expect(run(fixture("pr24-open-two-medium.md"))).toBe("2");
   });
+
+  // PR #40 lists three Low findings under one "View low (3)" header and one Low
+  // badge (issue #41). The header labels all three.
+  it('reports 0 for three Low findings in one "View low (3)" group (PR #40)', () => {
+    expect(run(fixture("pr40-three-low.md"))).toBe("0");
+  });
+});
+
+// Issue #41: a "View <severity> (N)" header labels the next N findings in its
+// group. A group with fewer or more findings than its N is unknown (rule 6).
+describe("qodo-open-findings.sh: severity groups", () => {
+  const low = fixture("pr40-three-low.md");
+  const LOW_HEADER = "<details><summary><ins><strong>View low (3)</strong></ins></summary><br/>";
+  const MEDIUM_BADGE =
+    '<img src="https://img.shields.io/badge/Medium-634FD1?style=flat-square" height="20px" alt="Remediation recommended">';
+
+  /** One finding block, in the shape PR #40's comment lists them. */
+  const finding = (n: number) =>
+    `<details>\n<summary>  ${n}.  Medium finding ${n} <code>🐞 Bug</code></summary>\n\n<br/>\n\n>Quoted description\n\n<hr/>\n</details>\n\n\n`;
+
+  /** PR #40 with a "View medium (<header>)" group of `findings` findings before its Low group. */
+  function withMediumGroup(header: number, findings: number): string {
+    expect(low).toContain(LOW_HEADER);
+    expect(low).toContain("<code>🐞 Bugs (3)</code>");
+    const group =
+      `<details><summary><ins><strong>View medium (${header})</strong></ins></summary><br/>\n${MEDIUM_BADGE}\n\n` +
+      Array.from({ length: findings }, (_, i) => finding(i + 1)).join("") +
+      "</details>\n\n";
+    return low.replace(LOW_HEADER, group + LOW_HEADER).replace("Bugs (3)", `Bugs (${3 + findings})`);
+  }
+
+  it("a mixed review, 2 Medium then 3 Low, each group under its header: 2", () => {
+    expect(run(withMediumGroup(2, 2))).toBe("2");
+  });
+
+  it.each([
+    { name: '"View low (4)" over three findings', body: () => low.replace("View low (3)", "View low (4)") },
+    { name: '"View low (2)" over three findings', body: () => low.replace("View low (3)", "View low (2)") },
+    { name: '"View medium (3)" over two findings, then the Low group', body: () => withMediumGroup(3, 2) },
+    { name: '"View medium (1)" over two findings, then the Low group', body: () => withMediumGroup(1, 2) },
+    { name: 'a "View low (0)" header', body: () => low.replace("View low (3)", "View low (0)") },
+    { name: "a group header without a count", body: () => low.replace("View low (3)", "View low") },
+  ])("count mismatch, $name: unknown", ({ body }) => {
+    expect(run(body())).toBe("unknown");
+  });
+
+  it("a group badge that disagrees with its header: unknown", () => {
+    const badge = low.match(/^<img src="https:\/\/img\.shields\.io\/badge\/Low-[^\n]*$/m)?.[0];
+    expect(badge).toBeDefined();
+    expect(run(low.replace(badge ?? "", MEDIUM_BADGE))).toBe("unknown");
+  });
 });
 
 describe("qodo-open-findings.sh fails closed", () => {
@@ -74,7 +125,7 @@ describe("qodo-open-findings.sh fails closed", () => {
 
   // Qodo on PR #24 ("Truncated comment reports a count"): a comment cut anywhere
   // before its footer must never print a count, whatever the badges say.
-  it.each(["pr11-no-issues.md", "pr19-all-resolved.md", "pr20-open-medium.md", "pr24-open-two-medium.md"])(
+  it.each(["pr11-no-issues.md", "pr19-all-resolved.md", "pr20-open-medium.md", "pr24-open-two-medium.md", "pr40-three-low.md"])(
     "reports unknown for %s cut after any line before the footer",
     (name) => {
       const lines = fixture(name).split("\n");
