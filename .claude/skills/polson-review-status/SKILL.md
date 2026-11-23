@@ -135,13 +135,13 @@ jq '{session: .review_session, runs: .review_runs, truncated: (.qar_operation_re
 jq -r '.findings[] | [.action_level, .attribution_status, .git_sha[0:7], .title, "\(.location.file_path):\(.location.start_line)"] | @tsv' "$POLSON_TMP/findings.json"
 ```
 
-First confirm the record has the fields this step reads. The CLI documents them in its tool schema (`qodo read tools pr-review-session findings --json`): "Returns the consolidated Finding: id, title, description, category, action_level, attribution_status, git_sha, location (file_path, start_line, end_line, side)…". If any finding lacks `action_level`, `attribution_status`, `git_sha` or `title`, the record's format has changed: stop and ask. Don't report NOT DONE as if Qodo had found something.
+First confirm the record is complete and has the fields this step reads. A truncated record can leave out findings, including open High or Medium ones, so `qar_operation_result_truncated` must be absent or false. The CLI documents them in its tool schema (`qodo read tools pr-review-session findings --json`): "Returns the consolidated Finding: id, title, description, category, action_level, attribution_status, git_sha, location (file_path, start_line, end_line, side)…". If any finding lacks `action_level`, `attribution_status`, `git_sha` or `title`, the record's format has changed: stop and ask. Don't report NOT DONE as if Qodo had found something.
 
 ```bash
-jq -e '(.review_runs | type == "array") and ([.findings[] | select((.action_level | type) != "string" or (.attribution_status | type) != "string" or (.git_sha | type) != "string" or (.title | type) != "string")] | length == 0)' "$POLSON_TMP/findings.json"
+jq -e '((.qar_operation_result_truncated // false) == false) and (.findings | type == "array") and (.review_runs | type == "array") and ([.findings[] | select((.action_level | type) != "string" or (.attribution_status | type) != "string" or (.git_sha | type) != "string" or (.title | type) != "string")] | length == 0)' "$POLSON_TMP/findings.json"
 ```
 
-It must print `true`. Anything else means stop and ask.
+It must print `true`. Anything else (a truncated record, a missing list, a finding without these fields) means stop and ask.
 
 Check:
 - `review_session.commit_sha` equals `$SHA`. The latest run is the entry in `review_runs` whose `run_id` matches `review_session.run_id`. Its `status`, `review_effort` and `review_complete` must agree with step 4. If they disagree, stop and ask.
