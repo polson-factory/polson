@@ -509,8 +509,10 @@ jobs:
           QODO_CLI_VERSION: 2.4.0
         run: bash .github/polson/qodo-cli.sh install
 
-      # Up to 5 reads a minute apart (the record can lag Qodo's comment): at most
-      # 5 x 60 s for the CLI plus 4 x 60 s of waiting, inside 12 minutes.
+      # Up to 5 reads a minute apart (the record can lag Qodo's comment). Worst
+      # case: 5 x 60 s for the CLI's catalog check (30 s + 30 s) and one 60 s read,
+      # or one catalog check and 5 reads, plus 4 x 60 s of waiting: 10 minutes,
+      # inside 12 (test/agent-workflow.test.ts).
       - name: Read Qodo's review record for the head commit
         id: record
         timeout-minutes: 12

@@ -46,6 +46,45 @@ describe("polson-agent.yml", () => {
     expect(copy).toContain('sudo chmod -R a-w "${{ runner.temp }}/polson"');
   });
 
+  // The key has the repo owner's full Qodo access. Only the step that reads Qodo's
+  // record gets it; qodo-record.sh fetches the CLI's tool catalog in that same step
+  // (issue #37), so no other step needs it.
+  it("QODO_API_KEY reaches only the step that reads Qodo's review record", () => {
+    expect(WORKFLOW.match(/secrets\.QODO_API_KEY/g) ?? []).toHaveLength(1);
+    const read = step("Read Qodo's review record for the head commit");
+    expect(read).toContain("QODO_API_KEY: ${{ secrets.QODO_API_KEY }}");
+    expect(read).toContain("bash .github/polson/qodo-record.sh");
+  });
+
+  // PR #38 (Qodo: "Slow catalog checks cut off review reads"): the read step must
+  // finish every attempt qodo-record.sh makes, each CLI call at its time limit, with
+  // a minute to spare, or the job kills it before the last read. Worst case: every
+  // attempt but the last fails the catalog check (both catalog calls time out), the
+  // last fetches the catalog and reads, with the waits between; or the catalog is
+  // ready at once and every attempt reads.
+  it("the record step's limit covers qodo-record.sh's worst case", () => {
+    const script = readFileSync(resolve(import.meta.dirname, "../.github/polson/qodo-record.sh"), "utf8");
+    const num = (re: RegExp) => {
+      const m = script.match(re);
+      expect(m, String(re)).not.toBeNull();
+      return Number(m?.[1]);
+    };
+    const refresh = num(/timeout (\d+) qodo tools --refresh/);
+    const help = num(/timeout (\d+) qodo tools help pr-review-session findings/);
+    const readRecord = num(/timeout (\d+) qodo read pr-review-session findings/);
+    const attempts = num(/attempts="\$\{VERIFY_ATTEMPTS:-(\d+)\}"/);
+    const delay = num(/delay="\$\{VERIFY_DELAY_SECONDS:-(\d+)\}"/);
+    const catalog = refresh + help;
+    const waits = (attempts - 1) * delay;
+    const worst = Math.max(attempts * catalog + readRecord + waits, catalog + attempts * readRecord + waits);
+
+    const read = step("Read Qodo's review record for the head commit");
+    expect(read).not.toContain("VERIFY_ATTEMPTS");
+    expect(read).not.toContain("VERIFY_DELAY_SECONDS");
+    const limit = Number(read.match(/\n {8}timeout-minutes: (\d+)\n/)?.[1]);
+    expect(worst).toBeLessThanOrEqual(limit * 60 - 60);
+  });
+
   // Every step has a limit; together they must leave the job's last 5 minutes for
   // setup and post steps, so the hand-over and the transcript upload always run.
   it("the agent job's step limits add up to at most 145 of its 150 minutes", () => {

@@ -27,6 +27,9 @@
 #
 # The Qodo CLI runs with an allowlist of environment variables (qodo_env), so it
 # never receives GH_TOKEN, GITHUB_TOKEN or the ACTIONS_* token variables.
+#
+# Before the first read it fetches the CLI's tool catalog into QODO_HOME (locally,
+# ~/.qodo) and checks the command it reads is in it (catalog_ready, issue #37).
 set -euo pipefail
 
 fail_input() { echo "::error::$1" >&2; exit 2; }
@@ -50,6 +53,39 @@ qodo_env() {
     if [ -n "${!name:-}" ]; then vars+=("$name=${!name}"); fi
   done
   env -i "${vars[@]}" "$@"
+}
+
+# Makes sure the CLI has the command qodo_run_state reads. Qodo CLI 2.4.0 builds its
+# managed-tool commands, `read pr-review-session findings` among them, only from its
+# cached tool catalog ($QODO_HOME/catalog.json). `qodo login` writes that cache and a
+# background refresh renews it, but the job never logs in (it has QODO_API_KEY) and
+# the CLI skips the background refresh under CI, QODO_DISABLE_AUTOUPDATE or --json.
+# So in the job's fresh QODO_HOME the command did not exist, and the CLI rejected
+# --pr-url on every read (issue #37, run 45156397208). This fetches the catalog,
+# which needs the key, then checks it has the read-only findings command with the
+# pr_url and extended parameters. If either fails it says why and returns 1: the
+# record is then not read, so the run is unknown (AGENTS.md rule 6). Each call has
+# 30 seconds, so every attempt fits the workflow step's limit
+# (test/agent-workflow.test.ts).
+catalog_ready() {
+  local out help
+  if ! out=$(qodo_env timeout 30 qodo tools --refresh --json); then
+    echo "::error::The Qodo CLI could not fetch its tool catalog, so Qodo's review record was not read. The CLI said: ${out:0:300}" >&2
+    return 1
+  fi
+  # -s reads the whole output as one array: anything but exactly one document is
+  # not the command's help.
+  if ! help=$(qodo_env timeout 30 qodo tools help pr-review-session findings --json) ||
+    ! jq -se 'length == 1 and (.[0]
+      | .kind == "qodo-managed-tool-catalog" and .toolCount == 1 and (.tools | length) == 1
+      and (.tools[0] | .name == "get-pr-review-findings"
+        and .readCommand == "qodo read pr-review-session findings"
+        and .access == "read" and .mutating == false
+        and (.parameters.properties | type == "object" and has("pr_url") and has("extended"))))' \
+      <<<"$help" >/dev/null; then
+    echo "::error::The Qodo CLI's tool catalog has no read-only pr-review-session findings command that takes --pr-url and --extended, so Qodo's review record was not read." >&2
+    return 1
+  fi
 }
 
 # Prints "<state> <effort>" for Qodo's latest run on this PR, from its review record:
@@ -101,9 +137,15 @@ qodo_run_state() {
   echo "$state"
 }
 
-run=unknown effort=-
+run=unknown effort=- ready=no
 for ((attempt = 1; attempt <= attempts; attempt++)); do
-  state=$(qodo_run_state)
+  # The catalog is fetched until it has the command, then read from QODO_HOME.
+  if [ "$ready" = yes ] || catalog_ready; then
+    ready=yes
+    state=$(qodo_run_state)
+  else
+    state="unknown -"
+  fi
   run="${state%% *}"
   effort="${state#* }"
   echo "attempt $attempt $(date -u +%H:%M:%S): head=${HEAD_SHA:0:7} run=$run effort=$effort"
