@@ -52,7 +52,7 @@ flowchart TD
   RC -- "none<br/>USED: #23" --> B --> AB
 
   CI["Required CI on every push: Node 24, Node 20.19.0<br/>USED: every PR"]
-  WT["Scripted wait, wait-for-pr.sh: every 60 s, up to 15 min.<br/>CI finished on the head commit, Qodo's review names it,<br/>the fail-closed reader gives a number, no busy comment,<br/>2 polls agree. USED: #23 PR #24"]
+  WT["Scripted wait, wait-for-pr.sh: every 60 s, up to 15 min.<br/>CI finished on the head commit, Qodo's review names it,<br/>the fail-closed reader gives a number, no busy comment,<br/>2 polls agree. USED: #23 PR #24; grouped findings: #39 PR #40"]
   RC -- "one agent PR: resume<br/>USED: #9 PR #11" --> WT
   AB -- "yes" --> WT
   CI -.-> WT
@@ -69,11 +69,11 @@ flowchart TD
   WG -- "yes, after round 2<br/>BUILT" --> FN
 
   FN{"Finish: PR head unchanged, CI green,<br/>Qodo finished, 0 open High or Medium?"}
-  CD["candidate-done: issue, PR and head SHA<br/>as agent job outputs. BUILT, #26"]
-  QR["qodo-record job, fresh runner, no PR code,<br/>read-only token: reads Qodo's review record<br/>for the head. BUILT, #26"]
-  VQ{"verify-qodo job, no Qodo key: still agent-working,<br/>head unchanged, and the record shows a complete,<br/>non-skipped review of it? BUILT, #26"}
+  CD["candidate-done: issue, PR and head SHA<br/>as agent job outputs. USED: run 45239806352, #39"]
+  QR["qodo-record job, fresh runner, no PR code,<br/>read-only token: reads Qodo's review record<br/>for the head. USED: run 45239806352, #39"]
+  VQ{"verify-qodo job, no Qodo key: still agent-working,<br/>head unchanged, and the record shows a complete,<br/>non-skipped review of it? USED: run 45239806352 #39 agent-done,<br/>run 45156397208 #29 needs-human"}
   HJ["hand-over job, always last: verification<br/>did not start or finish. BUILT, #26"]
-  AD["agent-done, with a summary comment<br/>USED: #9, #17, set by the agent job before #26"]
+  AD["agent-done, with a summary comment<br/>USED: #9, #17, set by the agent job before #26;<br/>#39, set by verify-qodo"]
   NH["needs-human: comment first, then label<br/>USED: #9, #23"]
   FN -- "yes" --> CD --> QR --> VQ
   VQ -- "yes" --> AD
@@ -159,7 +159,7 @@ Each gate says what must pass, the evidence it uses, what happens on failure, an
 
 | | |
 |---|---|
-| Must pass | All of these on 2 polls in a row with the same count: CI finished on the head commit; Qodo's "Code Review by Qodo" names the head commit; the reader prints a number; no "busy" comment. The reader prints a number only when the comment has Qodo's footer, every open finding has its own known severity label, and the count badges match the findings listed. Structure is matched only at the start of a line. |
+| Must pass | All of these on 2 polls in a row with the same count: CI finished on the head commit; Qodo's "Code Review by Qodo" names the head commit; the reader prints a number; no "busy" comment. The reader prints a number only when the comment has Qodo's footer, every open finding has a known severity label (a badge labels the next finding; a "View <severity> (N)" header labels the N findings in its group, and a group with more or fewer is unknown, #41), and the count badges match the findings listed. Structure is matched only at the start of a line. |
 | Evidence | Qodo's review comment and the check runs. |
 | On failure | Unknown or unreadable counts as not finished. After 15 minutes: `needs-human`. The branch moving after the check also means `needs-human`. |
 | Who decides | The script. |
@@ -238,7 +238,8 @@ Each gate says what must pass, the evidence it uses, what happens on failure, an
 | Last wait after round 2 | BUILT | |
 | Agent escalates itself | BUILT | Only in the pre-PR #12 workflow (#9, run 44910962909) |
 | Finish: `agent-done` (set by the agent job, before #26) | USED | #9, #17 |
-| Finish: candidate-done, then `qodo-record` and `verify-qodo` set `agent-done` or `needs-human` | BUILT | #26 (`test/qodo-record.test.ts`, `test/verify-qodo.test.ts`, `test/phase-finish.test.ts`) |
+| Finish: candidate-done, then `qodo-record` and `verify-qodo` set `agent-done` or `needs-human` | USED | `agent-done`: #39 (PR #40, run 45239806352: `run=complete effort=lite`, "Reviewed: agent-done."). `needs-human`: #29 (run 45156397208, record unreadable before #37) |
+| Findings reader: several findings in one "View <severity> (N)" group | USED | #39 (PR #40's three Low findings read as 0 in run 45239806352; fixed by #41, PR #42) |
 | `hand-over` job after verification did not finish | BUILT | #26 (`test/hand-over.test.ts`) |
 | Finish: `needs-human` (CI red, High or Medium left, unreadable, PR changed) | BUILT | |
 | Hand-over step after a failed or timed-out step | BUILT | Ran every time, never needed |
@@ -304,7 +305,7 @@ Each gate says what must pass, the evidence it uses, what happens on failure, an
 7. **"Every Low listed" is not checked.** Finish counts only High and Medium. Listing Lows relies on the resolve agent's report and the person's review.
 8. **Required checks don't need an up-to-date branch.** The strict policy is off, so CI may have run against an older `main`.
 9. **The person path has no scripted gate.** A person waits and applies the gate by hand; on PR #24 that meant running `wait-for-pr.sh` read-only.
-10. **A skipped Qodo review read as clean. BUILT: fixed in code by #26 (PR #27), not yet run for real.** On PR #25 Qodo's review record showed `review_effort: "skip"` and `review_complete: false` on all three runs, while its comment said "Great, no issues found!" for the head commit, and `wait-for-pr.sh` reported `qodo=finished open_high_medium=0`. Now the agent job ends with candidate-done. The `qodo-record` job reads Qodo's review record on a fresh runner, and the `verify-qodo` job decides: a skip goes to a person ("Qodo skipped reviewing <head>"). `QODO_API_KEY` never reaches the runner where agent-written code ran. Qodo's code never shares a runner with a GitHub write token: its job's token can only read contents, and the CLI's environment allowlist strips GitHub tokens. It stays BUILT until an unattended run uses it. The first unattended run (run 45156397208, issue #29) could not read the record at all: Qodo CLI 2.4.0 builds `read pr-review-session findings` only from its cached tool catalog, which a fresh `QODO_HOME` with an API key never gets, so it rejected `--pr-url` and the ticket went to a person (failed closed). `qodo-record.sh` now runs `qodo tools --refresh` first and checks the command's contract before reading (#37).
+10. **A skipped Qodo review read as clean. USED: fixed in code by #26 (PR #27), first used for real in run 45239806352.** On PR #25 Qodo's review record showed `review_effort: "skip"` and `review_complete: false` on all three runs, while its comment said "Great, no issues found!" for the head commit, and `wait-for-pr.sh` reported `qodo=finished open_high_medium=0`. Now the agent job ends with candidate-done. The `qodo-record` job reads Qodo's review record on a fresh runner, and the `verify-qodo` job decides: a skip goes to a person ("Qodo skipped reviewing <head>"). `QODO_API_KEY` never reaches the runner where agent-written code ran. Qodo's code never shares a runner with a GitHub write token: its job's token can only read contents, and the CLI's environment allowlist strips GitHub tokens. The first unattended run (run 45156397208, issue #29) could not read the record at all: Qodo CLI 2.4.0 builds `read pr-review-session findings` only from its cached tool catalog, which a fresh `QODO_HOME` with an API key never gets, so it rejected `--pr-url` and the ticket went to a person (failed closed). `qodo-record.sh` now runs `qodo tools --refresh` first and checks the command's contract before reading (#37). Run 45239806352 (issue #39, PR #40) then read the record in CI (`attempt 1 18:36:40: head=a1bb381 run=complete effort=lite`), and `verify-qodo` set `agent-done`. A skipped review has not come up in a real run yet: that branch is covered by `test/qodo-record.test.ts` and `test/verify-qodo.test.ts`.
 11. **Two merged PRs still have open Medium findings in Qodo.** PR #12 ("Builder job now allowed 150 minutes", accepted in writing) and PR #20 ("Agent may have edited .github files", disagreed with evidence) were both merged before the quality gate existed and never dismissed. Qodo still lists both as pending.
 12. **`review_complete=false` can stick on a PR; such PRs escalate to a person by design.** In Qodo's record for PRs #1 to #27, 4 of 31 non-skip runs had it, all on PR #20 and PR #27, and once a PR had it every later run did too. `verify-qodo` treats it as not reviewed (rule 6, and Qodo's guidance requires `review_complete=true`).
 13. **Agent transcripts are kept only on failure or escalation, as summaries.** BUILT, not yet run for real. After each agent step, `keep-transcript.sh` keeps what the agent did: its text, its tool calls, failed or refused calls (cut to 300 characters), and the final result with its refused calls. It drops tool output, because the repository is public and any signed-in GitHub user can download its artifacts, and then redacts known credential formats. The agent job uploads the summaries (7-day retention) whenever the run ends without candidate-done. A step cut off at its time limit gets a partial summary from Claude Code's own session log, because the action writes its transcript only when the session ends. Not covered: a run that reached candidate-done and was then escalated by `verify-qodo`, since the agent job ends before that decision. Error text can still quote command output, and redaction only knows common formats.
