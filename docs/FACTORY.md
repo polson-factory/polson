@@ -52,7 +52,7 @@ flowchart TD
   RC -- "none<br/>USED: #23" --> B --> AB
 
   CI["Required CI on every push: Node 24, Node 20.19.0<br/>USED: every PR"]
-  WT["Scripted wait, wait-for-pr.sh: every 60 s, up to 15 min.<br/>CI finished on the head commit, Qodo's review names it,<br/>the fail-closed reader gives a number, no busy comment,<br/>2 polls agree. USED: #23 PR #24"]
+  WT["Scripted wait, wait-for-pr.sh: every 60 s, up to 15 min.<br/>CI finished on the head commit, Qodo's review names it,<br/>the fail-closed reader gives a number, no busy comment,<br/>2 polls agree. Qodo's review record: a complete,<br/>non-skipped run on the head commit (BUILT, #26).<br/>USED: #23 PR #24"]
   RC -- "one agent PR: resume<br/>USED: #9 PR #11" --> WT
   AB -- "yes" --> WT
   CI -.-> WT
@@ -152,9 +152,9 @@ Each gate says what must pass, the evidence it uses, what happens on failure, an
 
 | | |
 |---|---|
-| Must pass | All of these on 2 polls in a row with the same count: CI finished on the head commit; Qodo's "Code Review by Qodo" names the head commit; the reader prints a number; no "busy" comment. The reader prints a number only when the comment has Qodo's footer, every open finding has its own known severity label, and the count badges match the findings listed. Structure is matched only at the start of a line. |
-| Evidence | Qodo's review comment and the check runs. |
-| On failure | Unknown or unreadable counts as not finished. After 15 minutes: `needs-human`. The branch moving after the check also means `needs-human`. |
+| Must pass | All of these on 2 polls in a row with the same count: CI finished on the head commit; Qodo's "Code Review by Qodo" names the head commit; the reader prints a number; no "busy" comment; and Qodo's own review record (read with the Qodo CLI) says the latest run is on the head commit, completed, complete and not skipped (BUILT, #26). The reader prints a number only when the comment has Qodo's footer, every open finding has its own known severity label, and the count badges match the findings listed. Structure is matched only at the start of a line. |
+| Evidence | Qodo's review comment, Qodo's review record (`qodo read pr-review-session findings --extended`), and the check runs. |
+| On failure | Unknown or unreadable counts as not finished, and so does a skipped Qodo run. After 15 minutes: `needs-human`, with "Qodo skipped reviewing <head>" for a skip. The branch moving after the check also means `needs-human`. |
 | Who decides | The script. |
 
 ### 6. Resolve (`resolve-prompt.md`, the AGENTS.md quality gate)
@@ -286,5 +286,5 @@ Each gate says what must pass, the evidence it uses, what happens on failure, an
 7. **"Every Low listed" is not checked.** Finish counts only High and Medium. Listing Lows relies on the resolve agent's report and the person's review.
 8. **Required checks don't need an up-to-date branch.** The strict policy is off, so CI may have run against an older `main`.
 9. **The person path has no scripted gate.** A person waits and applies the gate by hand; on PR #24 that meant running `wait-for-pr.sh` read-only.
-10. **A skipped Qodo review reads as clean.** On this PR's first commit (`e85167f`), Qodo's session recorded `review_effort: "skip"` and `review_complete: false`. Its comment still said "Great, no issues found!" and named the head commit. `wait-for-pr.sh` reads only the comment, so it reported `qodo=finished open_high_medium=0`, and in an agent run the finish gate would have given `agent-done` with no real review. PR #21 had the same skip. The fix is under `.github/`: the wait script would need Qodo's own review status, or would treat a skipped review as unknown.
+10. **A skipped Qodo review read as clean. BUILT (#26), not yet run by a real agent run.** On PR #25 Qodo's review record showed `review_effort: "skip"` and `review_complete: false` on all three runs, while its comment said "Great, no issues found!" for the head commit, and `wait-for-pr.sh` reported `qodo=finished open_high_medium=0`. The wait gate now also reads Qodo's review record, and a skip counts as not finished (`phase.sh` escalates "Qodo skipped reviewing <head>"). It stays BUILT until an unattended run uses it. Left open: the agent steps run before the wait steps in the same job, so code they run could leave a program behind that a wait step runs with `QODO_API_KEY` in its environment. Moving the Qodo read to a separate job would close that.
 11. **Two merged PRs still have open Medium findings in Qodo.** PR #12 ("Builder job now allowed 150 minutes", accepted in writing) and PR #20 ("Agent may have edited .github files", disagreed with evidence) were both merged before the quality gate existed and never dismissed. Qodo still lists both as pending.

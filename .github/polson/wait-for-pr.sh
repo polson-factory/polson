@@ -3,7 +3,9 @@
 # Read-only: it never comments, labels, or pushes.
 #
 # Usage: bash wait-for-pr.sh <pr-number>
-# Needs GH_TOKEN and GH_REPO (owner/name). Optional: POLL_SECONDS (default 60),
+# Needs GH_TOKEN and GH_REPO (owner/name), and the Qodo CLI (`qodo`) on PATH and
+# signed in: in the workflow with QODO_API_KEY and QODO_BASE_URL (see
+# with-qodo.sh), locally with `qodo login`. Optional: POLL_SECONDS (default 60),
 # TIMEOUT_SECONDS (default 900), REQUIRED_CHECKS (default "Node 24,Node 20.19.0").
 #
 # CI is finished when every required check run from GitHub Actions on the head
@@ -14,7 +16,15 @@
 #   - its "Code Review by Qodo" comment names the head commit,
 #   - that review can be read: qodo-open-findings.sh checks that its finding
 #     counts (bugs, rule violations, requirement gaps) match the findings it lists,
-#   - and no "Qodo is busy working" comment exists.
+#   - no "Qodo is busy working" comment exists,
+#   - and Qodo's own review record (read with the Qodo CLI) says its latest run is
+#     on the head commit, completed, complete, and not skipped.
+# The last check exists because the comment cannot tell a skipped review from a
+# real one: on PR #25 Qodo skipped all three runs, yet its comment said "Great, no
+# issues found!" and named the head commit, word for word like PR #11's real
+# review (issue #26). A skipped review is not a review. Anything else in the
+# record (no review yet, a run still going, an older commit, a CLI error,
+# unreadable output) also counts as not finished.
 # The summary ("PR Summary by Qodo", "Assessed commit <head>") is logged but not
 # required: after `/agentic_review`, Qodo posts only the review (PR #11). The
 # review must itself name the head commit, because the open count comes from it.
@@ -31,6 +41,8 @@
 #   ci_detail  each required check and its conclusion
 #   qodo       finished | not-finished
 #   qodo_open  open High or Medium findings on the head commit: a number, or unknown
+#   qodo_run   Qodo's latest run as its review record shows it: complete, skipped,
+#              started (or another unfinished status), older-commit, none, or unknown
 set -euo pipefail
 
 pr="${1:-}"
@@ -77,6 +89,55 @@ qodo_review_body() {
      | select(contains($review_mark))'
 }
 
+# Prints "<state> <effort>" for Qodo's latest run on this PR, from its review record:
+#   complete <effort>   a finished, complete, non-skipped review of commit $sha
+#   skipped <effort>    a skipped run (review_effort "skip", or status "skipped")
+#   <status> <effort>   a run that has not completed (for example "started")
+#   older-commit ...    the latest run is on another commit
+#   incomplete ...      completed but review_complete is not true
+#   none -              no review yet (review_session is null)
+#   unknown -           the CLI failed, or its output is unreadable or truncated
+# Only "complete" lets Qodo count as finished. The CLI's stderr (a trace id, or an
+# error) goes to the log; only its exit code and stdout are read.
+qodo_run_state() {
+  local record state
+  local line_re='^[a-z][a-z_-]{0,30} ([a-z][a-z_-]{0,30}|-)$'
+  if ! record=$(timeout 60 qodo read pr-review-session findings \
+      --pr-url "https://github.com/$GH_REPO/pull/$pr" --extended --json); then
+    echo "unknown -"
+    return 0
+  fi
+  # -s reads the whole output as one array, so jq prints nothing unless all of it
+  # is JSON, and anything but exactly one document is unreadable.
+  if ! state=$(jq -rs --arg sha "$sha" '
+    # Values from the record reach step outputs and issue comments: plain words only.
+    def word: tostring | if test("^[a-z][a-z_-]{0,30}$") then . else "unknown" end;
+    def effort: if .review_effort == null then "-" else .review_effort | word end;
+    if length != 1 then "unknown -"
+    else .[0]
+    | if type != "object" or .qar_operation_result_truncated == true then "unknown -"
+      elif .review_session == null then "none -"
+      else .review_session as $s
+        | [.review_runs[]? | select(.run_id == $s.run_id)] as $matches
+        | ($matches[0] // null) as $r
+        # The latest run is the one with the session run_id: it must exist and be unique.
+        | if $s.run_id == null or ($matches | length) != 1 then "unknown -"
+          elif $s.commit_sha != $sha or $r.commit_sha != $sha then "older-commit \($r | effort)"
+          elif $r.review_effort == "skip" or $s.status == "skipped" then "skipped \($r | effort)"
+          elif $s.status != "completed" or $r.status != "completed" then "\($s.status | word) \($r | effort)"
+          elif $s.review_complete != true or $r.review_complete != true then "incomplete \($r | effort)"
+          elif ($r.review_effort | type) != "string" or ($r | effort) == "unknown" then "unknown -"
+          else "complete \($r | effort)"
+          end
+      end
+    end' <<<"$record" 2>/dev/null); then # jq fails only when the output is not JSON of the shape read above: unreadable, so unknown.
+    state="unknown -"
+  fi
+  # Exactly one "<state> <effort>" line, or the record was not read.
+  [[ "$state" =~ $line_re ]] || state="unknown -"
+  echo "$state"
+}
+
 # One poll. Sets pr_state, sha, ci, ci_detail, the Qodo flags and open. Returns non-zero
 # if a GitHub call failed, so the caller can retry on the next poll.
 poll_once() {
@@ -113,6 +174,10 @@ poll_once() {
   if [ "$review" = yes ]; then
     open=$(qodo_review_body <<<"$comments" | bash "$here/qodo-open-findings.sh") || open=unknown
   fi
+  local run_state
+  run_state=$(qodo_run_state)
+  run="${run_state%% *}"
+  effort="${run_state#* }"
   return 0
 }
 
@@ -125,6 +190,7 @@ emit() {
     echo "ci_detail=$ci_detail"
     echo "qodo=$qodo"
     echo "qodo_open=$qodo_open"
+    echo "qodo_run=$run"
   } >>"$out"
 }
 
@@ -134,7 +200,7 @@ stable=0
 last_sha=""
 n=0
 pr_state="" sha="" ci="pending" ci_detail="" qodo="not-finished" qodo_open="unknown"
-summary=no review=no busy=no open=unknown last_open=""
+summary=no review=no busy=no open=unknown last_open="" run=unknown effort=-
 
 while :; do
   n=$((n + 1))
@@ -152,14 +218,14 @@ while :; do
       stable=0
     fi
     last_sha="$sha"
-    if [ "$review" = yes ] && [ "$open" != unknown ] && [ "$busy" = no ]; then
+    if [ "$review" = yes ] && [ "$open" != unknown ] && [ "$busy" = no ] && [ "$run" = complete ]; then
       if [ "$stable" -gt 0 ] && [ "$open" != "$last_open" ]; then stable=0; fi
       stable=$((stable + 1))
       last_open="$open"
     else
       stable=0
     fi
-    echo "poll $n $now: head=${sha:0:7} ci=$ci [$ci_detail] qodo: summary@head=$summary review@head=$review busy=$busy open_high_medium=$open ready_polls=$stable"
+    echo "poll $n $now: head=${sha:0:7} ci=$ci [$ci_detail] qodo: summary@head=$summary review@head=$review busy=$busy run=$run effort=$effort open_high_medium=$open ready_polls=$stable"
     if [ "$ci" != "pending" ] && [ "$stable" -ge 2 ]; then
       break
     fi
@@ -176,5 +242,5 @@ if [ "$pr_state" = "OPEN" ] && [ "$stable" -ge 2 ]; then
   qodo_open="$last_open"
 fi
 
-echo "Result: head=${sha:-none} ci=$ci ($ci_detail) qodo=$qodo open_high_medium=$qodo_open"
+echo "Result: head=${sha:-none} ci=$ci ($ci_detail) qodo=$qodo run=$run effort=$effort open_high_medium=$qodo_open"
 emit

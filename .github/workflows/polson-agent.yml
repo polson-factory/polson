@@ -85,6 +85,12 @@ jobs:
     env:
       GH_REPO: ${{ github.repository }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      # The Qodo CLI the wait steps install (with-qodo.sh): Qodo's published,
+      # immutable installer, checked against this SHA-256 before it runs, pinned to
+      # one CLI version. Not secret. The API key is set only on the wait steps.
+      QODO_INSTALLER_URL: https://get.qodo.ai/installers/9dfe51a938ac0b7e193d03a1acc7d5f4d35a829efff6aff79b3fd4114f17d8ff/install.sh
+      QODO_INSTALLER_SHA256: 9dfe51a938ac0b7e193d03a1acc7d5f4d35a829efff6aff79b3fd4114f17d8ff
+      QODO_CLI_VERSION: 2.4.0
     steps:
       # Runs first and needs only gh, so a failed checkout or install cannot block it.
       # Only one job in the polson-agent group runs at a time, so an issue still
@@ -256,6 +262,21 @@ jobs:
           AGENT_SKIPPED: ${{ steps.build.outputs.skipped_due_to_workflow_validation_mismatch }}
         run: bash "${{ runner.temp }}/polson/phase.sh" after-build "$ISSUE_NUMBER"
 
+      # Qodo's review record, for the wait steps (issue #26). Qodo's PR comment
+      # cannot tell a skipped review from a real one, so wait-for-pr.sh also reads
+      # Qodo's own record of the run with the Qodo CLI, and a skip counts as not
+      # finished. The CLI signs in with QODO_API_KEY, a personal Qodo key with the
+      # repo owner's full Qodo access, so:
+      #   - QODO_API_KEY and QODO_BASE_URL are set on the three wait steps only.
+      #     The build and resolve agent steps never get them, and no other step does.
+      #   - with-qodo.sh installs the CLI into a new QODO_HOME under runner.temp and
+      #     deletes it when the step ends. The key is read from the environment and
+      #     never written to disk.
+      # Not a sandbox: the agent steps run before the wait steps in this job, and
+      # code they run (npm test) could leave a program behind that a later wait
+      # step runs with the key in its environment. The key is short-lived (30
+      # days), and a separate job for the Qodo read would close this.
+
       # Phase: wait (round 0), then resolve round 1.
       - name: "Wait for CI and Qodo (before round 1)"
         id: wait0
@@ -266,7 +287,9 @@ jobs:
           ISSUE_NUMBER: ${{ steps.resolve.outputs.number }}
           PR: ${{ steps.built.outputs.pr || steps.existing.outputs.pr }}
           BRANCH: ${{ steps.built.outputs.branch || steps.existing.outputs.branch }}
-        run: bash "${{ runner.temp }}/polson/phase.sh" wait "$ISSUE_NUMBER" 0
+          QODO_API_KEY: ${{ secrets.QODO_API_KEY }}
+          QODO_BASE_URL: https://sdk.qodo.ai
+        run: bash "${{ runner.temp }}/polson/with-qodo.sh" bash "${{ runner.temp }}/polson/phase.sh" wait "$ISSUE_NUMBER" 0
 
       - name: "Resolve round 1: the agent handles CI and Qodo results"
         id: resolve1
@@ -308,7 +331,9 @@ jobs:
           ISSUE_NUMBER: ${{ steps.resolve.outputs.number }}
           PR: ${{ steps.wait0.outputs.pr }}
           BRANCH: ${{ steps.wait0.outputs.branch }}
-        run: bash "${{ runner.temp }}/polson/phase.sh" wait "$ISSUE_NUMBER" 1
+          QODO_API_KEY: ${{ secrets.QODO_API_KEY }}
+          QODO_BASE_URL: https://sdk.qodo.ai
+        run: bash "${{ runner.temp }}/polson/with-qodo.sh" bash "${{ runner.temp }}/polson/phase.sh" wait "$ISSUE_NUMBER" 1
 
       - name: "Resolve round 2: the agent handles CI and Qodo results"
         id: resolve2
@@ -350,7 +375,9 @@ jobs:
           ISSUE_NUMBER: ${{ steps.resolve.outputs.number }}
           PR: ${{ steps.wait1.outputs.pr }}
           BRANCH: ${{ steps.wait1.outputs.branch }}
-        run: bash "${{ runner.temp }}/polson/phase.sh" wait "$ISSUE_NUMBER" 2
+          QODO_API_KEY: ${{ secrets.QODO_API_KEY }}
+          QODO_BASE_URL: https://sdk.qodo.ai
+        run: bash "${{ runner.temp }}/polson/with-qodo.sh" bash "${{ runner.temp }}/polson/phase.sh" wait "$ISSUE_NUMBER" 2
 
       # Phase: finish, from the latest wait's results (a skipped wait has none).
       - name: "Finish: agent-done or needs-human"

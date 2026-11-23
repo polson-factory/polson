@@ -211,7 +211,7 @@ case "$cmd" in
     # Run the read-only wait, then pass its outputs on and read them back.
     wait_out=$(mktemp)
     GITHUB_OUTPUT="$wait_out" bash "$here/wait-for-pr.sh" "$PR"
-    PR_STATE="" HEAD_SHA="" CI="" CI_DETAIL="" QODO="" QODO_OPEN=""
+    PR_STATE="" HEAD_SHA="" CI="" CI_DETAIL="" QODO="" QODO_OPEN="" QODO_RUN=""
     while IFS='=' read -r key value; do
       case "$key" in
         pr_state) PR_STATE="$value" ;;
@@ -220,6 +220,7 @@ case "$cmd" in
         ci_detail) CI_DETAIL="$value" ;;
         qodo) QODO="$value" ;;
         qodo_open) QODO_OPEN="$value" ;;
+        qodo_run) QODO_RUN="$value" ;;
         *) continue ;;
       esac
       set_out "$key" "$value"
@@ -239,7 +240,13 @@ case "$cmd" in
       exit 0
     fi
     if [ "${QODO:-}" != "finished" ]; then
-      escalate "Qodo did not finish reviewing ${HEAD_SHA:0:7} within $limit. Pull request: #$PR."
+      # A skipped review is not a review (issue #26): say so, so a person knows
+      # that waiting longer will not help.
+      if [ "${QODO_RUN:-}" = "skipped" ]; then
+        escalate "Qodo skipped reviewing ${HEAD_SHA:0:7}: its review record shows a skipped run, which is not a review. A person reviews the pull request or accepts an exception in writing. Pull request: #$PR."
+      else
+        escalate "Qodo did not finish reviewing ${HEAD_SHA:0:7} within $limit (its latest run: ${QODO_RUN:-unknown}). Pull request: #$PR."
+      fi
       exit 0
     fi
     if [ "$round" = "2" ]; then
