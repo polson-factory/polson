@@ -10,8 +10,10 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runReport } from "../src/cli.js";
 import { fixturePath, loadRawFixture } from "./fixtures.js";
@@ -266,5 +268,24 @@ describe("report CLI", () => {
       expect(err).toContain("Usage: npm run report --");
       expect(existsSync(join(cwd, "reports"))).toBe(false);
     });
+  });
+});
+
+describe("report CLI entry point", () => {
+  it("prints usage on -h when run as a real command, and writes nothing", () => {
+    const tsx = fileURLToPath(new URL("../node_modules/.bin/tsx", import.meta.url));
+    const script = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+    const cwd = mkdtempSync(join(tmpdir(), "polson-cli-entry-"));
+    try {
+      const result = spawnSync(tsx, [script, "-h"], { cwd, encoding: "utf8" });
+
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(0);
+      expect(result.stdout.startsWith("Usage: npm run report --")).toBe(true);
+      expect(result.stderr).toBe("");
+      expect(existsSync(join(cwd, "reports"))).toBe(false);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });
