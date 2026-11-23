@@ -1,3 +1,4 @@
+
 <h3>Code Review by Qodo</h3>
 <code>🐞 Bugs (0)</code>  <code>📘 Rule violations (0)</code>  <code>📎 Requirement gaps (0)</code>
 
@@ -19,7 +20,7 @@ Qodo reviewed your code and found no material issues that require review
 
 <br/>
 
-<pre>💡 Did you know, you can route each severity your way: inline, summary, both, or drop</pre>
+<pre>💡 Did you know, you can add REVIEW.md to your repo root and Qodo follows it on every PR</pre>
 
 <a href="https://docs.qodo.ai/tips-and-tricks">More tips ↗</a> | <a href="https://app.qodo.ai/configurations?tab=display-preferences">Customize Qodo ↗</a> | <a href="https://docs.qodo.ai">Qodo docs ↗</a>
 
@@ -29,6 +30,6 @@ Qodo reviewed your code and found no material issues that require review
 <!-- qodo-daily-tip:end -->
 
 
-<!-- https://github.com/shrooms08/polson/commit/b773ba75ff491bcc31f8fa32e5b9603fdb82906e -->
+<!-- https://github.com/shrooms08/polson/commit/b47481f2ccd57bb5ff436d405ec28fb761d2b0da -->
 
 <a href="https://www.qodo.ai"><img src="https://www.qodo.ai/wp-content/uploads/2025/03/qodo-logo.svg" width="80" alt="Qodo Logo"></a>
