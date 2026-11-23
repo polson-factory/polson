@@ -84,11 +84,10 @@ jobs:
     # minutes run out (the rest covers job setup and post steps).
     #   setup: sweep 2, checkout 3, copy 1, Node 3, install 5, resolve 2,
     #          prompt 1, mark 1, resume check 1                            = 19
-    #   build agent 22, keep its transcript 1, after-build 2               = 25
+    #   build agent 20, keep its transcript 1, after-build 2               = 23
     #   3 waits x 17 (the script gives up after 15 minutes)                = 51
     #   2 resolve agents x 20, 2 keep transcript x 1, 2 after-resolve x 2  = 46
-    #   finish 1, hand-over 3                                              =  4
-    # The transcript upload runs after the hand-over step, outside this budget.
+    #   finish 1, hand-over 3, transcript upload 2                         =  6
     # Steps that are skipped take no time, so most runs are much shorter.
     timeout-minutes: 150
     # For the verify-qodo and hand-over jobs. Set by the finish step only when every
@@ -138,7 +137,13 @@ jobs:
       # so checking out a PR branch later cannot change them mid-run.
       - name: Keep a copy of the scripts and prompts
         timeout-minutes: 1
-        run: rm -rf "${{ runner.temp }}/polson" && cp -R .github/polson "${{ runner.temp }}/polson"
+        # Owned by root and read-only, so the agents' file tools cannot change the
+        # helpers they run (Claude Code's Write and Edit can reach paths outside the
+        # working directory; the agent steps also deny them this directory).
+        run: |
+          rm -rf "${{ runner.temp }}/polson" && cp -R .github/polson "${{ runner.temp }}/polson"
+          sudo chown -R root:root "${{ runner.temp }}/polson"
+          sudo chmod -R a-w "${{ runner.temp }}/polson"
 
       - name: Set up Node 24
         timeout-minutes: 3
@@ -250,7 +255,7 @@ jobs:
       - name: "Build: the agent implements the ticket and opens a PR"
         id: build
         if: steps.existing.outputs.next == 'build'
-        timeout-minutes: 22
+        timeout-minutes: 20
         uses: anthropics/claude-code-action@acfe7992852970efb4fee683d63d628e3e52df67 # v1.0.286
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -261,7 +266,7 @@ jobs:
             --permission-mode default
             --max-turns 150
             --allowedTools "Read,Glob,Grep,Edit,Write,Bash(npm ci),Bash(npm install),Bash(npm test),Bash(npm test:*),Bash(npm run typecheck),Bash(npm run report:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git branch:*),Bash(git checkout:*),Bash(git switch:*),Bash(git restore:*),Bash(git add:*),Bash(git rm:*),Bash(git mv:*),Bash(git commit:*),Bash(bash ${{ runner.temp }}/polson/push-branch.sh ${{ steps.resolve.outputs.number }}),Bash(git pull:*),Bash(git fetch:*),Bash(git rev-parse:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(gh pr create:*),Bash(gh pr view:*)"
-            --disallowedTools "WebFetch,WebSearch,Bash(gh api:*),Bash(gh pr merge:*),Bash(git merge:*),Bash(git push:*),Bash(sleep:*),Edit(./.github/**),Write(./.github/**)"
+            --disallowedTools "WebFetch,WebSearch,Bash(gh api:*),Bash(gh pr merge:*),Bash(git merge:*),Bash(git push:*),Bash(sleep:*),Edit(./.github/**),Write(./.github/**),Edit(./.git/**),Write(./.git/**),Edit(/${{ runner.temp }}/**),Write(/${{ runner.temp }}/**)"
 
       # Keeps this agent step's transcript for the failure artifact below.
       - name: "Keep the build agent's transcript"
@@ -309,7 +314,7 @@ jobs:
             --permission-mode default
             --max-turns 100
             --allowedTools "Read,Glob,Grep,Edit,Write,Bash(npm ci),Bash(npm install),Bash(npm test),Bash(npm test:*),Bash(npm run typecheck),Bash(npm run report:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git restore:*),Bash(git add:*),Bash(git commit:*),Bash(bash ${{ runner.temp }}/polson/push-branch.sh ${{ steps.resolve.outputs.number }}),Bash(git rev-parse:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh pr edit:*),Bash(gh pr comment:*),Bash(gh run view:*),Bash(gh run list:*)"
-            --disallowedTools "WebFetch,WebSearch,Bash(gh api:*),Bash(gh pr merge:*),Bash(git merge:*),Bash(git push:*),Bash(sleep:*),Edit(./.github/**),Write(./.github/**)"
+            --disallowedTools "WebFetch,WebSearch,Bash(gh api:*),Bash(gh pr merge:*),Bash(git merge:*),Bash(git push:*),Bash(sleep:*),Edit(./.github/**),Write(./.github/**),Edit(./.git/**),Write(./.git/**),Edit(/${{ runner.temp }}/**),Write(/${{ runner.temp }}/**)"
 
       # Keeps this agent step's transcript for the failure artifact below.
       - name: "Keep the round 1 resolver's transcript"
@@ -359,7 +364,7 @@ jobs:
             --permission-mode default
             --max-turns 100
             --allowedTools "Read,Glob,Grep,Edit,Write,Bash(npm ci),Bash(npm install),Bash(npm test),Bash(npm test:*),Bash(npm run typecheck),Bash(npm run report:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git restore:*),Bash(git add:*),Bash(git commit:*),Bash(bash ${{ runner.temp }}/polson/push-branch.sh ${{ steps.resolve.outputs.number }}),Bash(git rev-parse:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh pr edit:*),Bash(gh pr comment:*),Bash(gh run view:*),Bash(gh run list:*)"
-            --disallowedTools "WebFetch,WebSearch,Bash(gh api:*),Bash(gh pr merge:*),Bash(git merge:*),Bash(git push:*),Bash(sleep:*),Edit(./.github/**),Write(./.github/**)"
+            --disallowedTools "WebFetch,WebSearch,Bash(gh api:*),Bash(gh pr merge:*),Bash(git merge:*),Bash(git push:*),Bash(sleep:*),Edit(./.github/**),Write(./.github/**),Edit(./.git/**),Write(./.git/**),Edit(/${{ runner.temp }}/**),Write(/${{ runner.temp }}/**)"
 
       # Keeps this agent step's transcript for the failure artifact below.
       - name: "Keep the round 2 resolver's transcript"

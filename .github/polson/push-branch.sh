@@ -6,6 +6,10 @@
 # branch of the same name, and only if that name is a ticket branch for <issue>.
 set -euo pipefail
 
+# Every git call runs without the repository's hooks or fsmonitor: the agents' file
+# tools could otherwise plant a hook in .git/ that runs during this helper.
+git() { command git -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"; }
+
 issue="${1:-}"
 if ! [[ "$issue" =~ ^[1-9][0-9]{0,9}$ ]]; then
   echo "Usage: bash push-branch.sh <issue-number>" >&2

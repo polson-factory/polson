@@ -4,7 +4,7 @@
 // any push whose changes against the default branch touch .github/ (added,
 // modified, deleted or renamed), and names the paths.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -135,6 +135,25 @@ describe("push-branch.sh", () => {
       expect(r.status, r.stderr).toBe(0);
       expect(pushed()).toBe(true);
     });
+  });
+
+  // Qodo on PR #33: the agents' Write tool can reach .git/, so a planted hook could
+  // run arbitrary code (or push something else) during the helper's own git calls.
+  it("never runs git hooks from the repository", () => {
+    write("src/a.ts", "export const a = 5;\n");
+    git(work, "add", "-A");
+    git(work, "commit", "--quiet", "-m", "src only");
+    // Planted after the commit, so only the helper's own git calls could run them.
+    const marker = join(dir, "hook-ran");
+    for (const hook of ["pre-push", "reference-transaction", "post-checkout"]) {
+      writeFileSync(join(work, ".git", "hooks", hook), `#!/bin/sh\ntouch "${marker}"\n`);
+      chmodSync(join(work, ".git", "hooks", hook), 0o755);
+    }
+    const r = spawnSync("bash", [PUSH, "29"], { cwd: work, env, encoding: "utf8" });
+
+    expect(r.status, r.stderr).toBe(0);
+    expect(pushed()).toBe(true);
+    expect(existsSync(marker)).toBe(false);
   });
 
   it("refuses when it cannot read the default branch (rule 6: unknown is not allowed)", () => {
