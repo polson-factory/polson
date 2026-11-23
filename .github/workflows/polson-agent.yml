@@ -1,10 +1,18 @@
 # Lets Polson's agent pick up a ticket without anyone prompting it.
 #
-# Label flow: ready-for-agent -> agent-working -> agent-done (PR opened and every
-# check passed; a human decides) or needs-human (stopped and needs a person).
+# Label flow: ready-for-agent -> agent-working -> agent-done (PR opened, every
+# check passed and Qodo's review record confirmed a real review; a human decides)
+# or needs-human (stopped and needs a person).
 #
-# Phases, all in one job. The agent only does judgement work; scripts wait, loop,
-# and decide the label. Scripts live in .github/polson/:
+# Four jobs:
+#   agent        the phases below. It ends with candidate-done, never agent-done.
+#   qodo-record  only after candidate-done: on a fresh runner, reads Qodo's own review
+#                record for the head commit (issue #26).
+#   verify-qodo  then sets agent-done or needs-human from that record.
+#   hand-over    always runs last: a ticket still agent-working goes to a person.
+#
+# Phases of the agent job. The agent only does judgement work; scripts wait, loop,
+# and decide. Scripts live in .github/polson/:
 #   resume  phase.sh find-pr: reuse an open PR the agent opened from a branch named
 #           <issue>-*. A matching PR opened by anyone else goes to a person.
 #   build   agent (build-prompt.md): implement, test, push, open the PR. No waiting.
@@ -12,8 +20,8 @@
 #           every 60 seconds for up to 15 minutes, then a gate picks the next phase.
 #   resolve agent (resolve-prompt.md): handle CI failures and Qodo findings, push
 #           at most once, and report on the issue.
-#   finish  phase.sh finish: agent-done only if CI is green, Qodo finished, and Qodo
-#           lists no open High or Medium finding; otherwise needs-human.
+#   finish  phase.sh finish: candidate-done only if CI is green, Qodo finished, and
+#           Qodo's comment lists no open High or Medium finding; otherwise needs-human.
 # The wait and resolve pair runs at most twice (2 fix rounds), then a last wait.
 # Steps cannot loop, so the rounds are written out: wait0, resolve1, after1,
 # wait1, resolve2, after2, wait2, finish.
@@ -82,15 +90,18 @@ jobs:
     #   finish 1, hand-over 3                                              =  4
     # Steps that are skipped take no time, so most runs are much shorter.
     timeout-minutes: 150
+    # For the verify-qodo and hand-over jobs. Set by the finish step only when every
+    # check this job can make passed (candidate-done).
+    outputs:
+      issue: ${{ steps.resolve.outputs.number }}
+      candidate: ${{ steps.finish.outputs.candidate }}
+      pr: ${{ steps.finish.outputs.pr }}
+      head_sha: ${{ steps.finish.outputs.head_sha }}
+      ci_detail: ${{ steps.finish.outputs.ci_detail }}
+      rounds: ${{ steps.finish.outputs.rounds }}
     env:
       GH_REPO: ${{ github.repository }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-      # The Qodo CLI the wait steps install (with-qodo.sh): Qodo's published,
-      # immutable installer, checked against this SHA-256 before it runs, pinned to
-      # one CLI version. Not secret. The API key is set only on the wait steps.
-      QODO_INSTALLER_URL: https://get.qodo.ai/installers/9dfe51a938ac0b7e193d03a1acc7d5f4d35a829efff6aff79b3fd4114f17d8ff/install.sh
-      QODO_INSTALLER_SHA256: 9dfe51a938ac0b7e193d03a1acc7d5f4d35a829efff6aff79b3fd4114f17d8ff
-      QODO_CLI_VERSION: 2.4.0
     steps:
       # Runs first and needs only gh, so a failed checkout or install cannot block it.
       # Only one job in the polson-agent group runs at a time, so an issue still
@@ -262,21 +273,6 @@ jobs:
           AGENT_SKIPPED: ${{ steps.build.outputs.skipped_due_to_workflow_validation_mismatch }}
         run: bash "${{ runner.temp }}/polson/phase.sh" after-build "$ISSUE_NUMBER"
 
-      # Qodo's review record, for the wait steps (issue #26). Qodo's PR comment
-      # cannot tell a skipped review from a real one, so wait-for-pr.sh also reads
-      # Qodo's own record of the run with the Qodo CLI, and a skip counts as not
-      # finished. The CLI signs in with QODO_API_KEY, a personal Qodo key with the
-      # repo owner's full Qodo access, so:
-      #   - QODO_API_KEY and QODO_BASE_URL are set on the three wait steps only.
-      #     The build and resolve agent steps never get them, and no other step does.
-      #   - with-qodo.sh installs the CLI into a new QODO_HOME under runner.temp and
-      #     deletes it when the step ends. The key is read from the environment and
-      #     never written to disk.
-      # Not a sandbox: the agent steps run before the wait steps in this job, and
-      # code they run (npm test) could leave a program behind that a later wait
-      # step runs with the key in its environment. The key is short-lived (30
-      # days), and a separate job for the Qodo read would close this.
-
       # Phase: wait (round 0), then resolve round 1.
       - name: "Wait for CI and Qodo (before round 1)"
         id: wait0
@@ -287,9 +283,7 @@ jobs:
           ISSUE_NUMBER: ${{ steps.resolve.outputs.number }}
           PR: ${{ steps.built.outputs.pr || steps.existing.outputs.pr }}
           BRANCH: ${{ steps.built.outputs.branch || steps.existing.outputs.branch }}
-          QODO_API_KEY: ${{ secrets.QODO_API_KEY }}
-          QODO_BASE_URL: https://sdk.qodo.ai
-        run: bash "${{ runner.temp }}/polson/with-qodo.sh" bash "${{ runner.temp }}/polson/phase.sh" wait "$ISSUE_NUMBER" 0
+        run: bash "${{ runner.temp }}/polson/phase.sh" wait "$ISSUE_NUMBER" 0
 
       - name: "Resolve round 1: the agent handles CI and Qodo results"
         id: resolve1
@@ -331,9 +325,7 @@ jobs:
           ISSUE_NUMBER: ${{ steps.resolve.outputs.number }}
           PR: ${{ steps.wait0.outputs.pr }}
           BRANCH: ${{ steps.wait0.outputs.branch }}
-          QODO_API_KEY: ${{ secrets.QODO_API_KEY }}
-          QODO_BASE_URL: https://sdk.qodo.ai
-        run: bash "${{ runner.temp }}/polson/with-qodo.sh" bash "${{ runner.temp }}/polson/phase.sh" wait "$ISSUE_NUMBER" 1
+        run: bash "${{ runner.temp }}/polson/phase.sh" wait "$ISSUE_NUMBER" 1
 
       - name: "Resolve round 2: the agent handles CI and Qodo results"
         id: resolve2
@@ -375,12 +367,10 @@ jobs:
           ISSUE_NUMBER: ${{ steps.resolve.outputs.number }}
           PR: ${{ steps.wait1.outputs.pr }}
           BRANCH: ${{ steps.wait1.outputs.branch }}
-          QODO_API_KEY: ${{ secrets.QODO_API_KEY }}
-          QODO_BASE_URL: https://sdk.qodo.ai
-        run: bash "${{ runner.temp }}/polson/with-qodo.sh" bash "${{ runner.temp }}/polson/phase.sh" wait "$ISSUE_NUMBER" 2
+        run: bash "${{ runner.temp }}/polson/phase.sh" wait "$ISSUE_NUMBER" 2
 
       # Phase: finish, from the latest wait's results (a skipped wait has none).
-      - name: "Finish: agent-done or needs-human"
+      - name: "Finish: candidate-done or needs-human"
         id: finish
         if: >-
           steps.after1.outputs.next == 'finish' ||
@@ -401,33 +391,157 @@ jobs:
         run: bash "${{ runner.temp }}/polson/phase.sh" finish "$ISSUE_NUMBER"
 
       - name: Hand over to a person if the run did not finish
-        # Runs even when an earlier step failed, timed out, or was cancelled.
+        # Runs even when an earlier step failed, timed out, or was cancelled. After
+        # candidate-done it leaves the ticket to verify-qodo; the hand-over job below
+        # catches a verify-qodo that never finishes.
         if: always() && steps.resolve.outputs.number != ''
         timeout-minutes: 3
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ steps.resolve.outputs.number }}
           JOB_STATUS: ${{ job.status }}
+          CANDIDATE: ${{ steps.finish.outputs.candidate }}
           STEPS: >-
             build: ${{ steps.build.outcome || 'not run' }},
             resolve round 1: ${{ steps.resolve1.outcome || 'not run' }},
             resolve round 2: ${{ steps.resolve2.outcome || 'not run' }}
-        run: |
-          set -euo pipefail
-          labels=$(gh issue view "$ISSUE_NUMBER" --json labels --jq '.labels[].name')
-          if ! grep -qx 'agent-working' <<<"$labels"; then
-            echo "The issue is no longer agent-working; it was already handed over."
-            exit 0
-          fi
+        run: bash "${{ runner.temp }}/polson/hand-over.sh" agent "$ISSUE_NUMBER"
 
-          if [ "$JOB_STATUS" != "success" ]; then
-            why="The agent job ended with status \`$JOB_STATUS\` ($STEPS). A step failed, timed out, or was cancelled."
-          else
-            why="The run finished without moving the issue to agent-done or needs-human ($STEPS)."
-          fi
+  # Qodo's PR comment cannot tell a skipped review from a real one; its own review
+  # record can (issue #26). Reading the record needs QODO_API_KEY, a personal key
+  # with the repo owner's full Qodo access, and runs Qodo's code (its installer and
+  # CLI). Two jobs keep the key and Qodo's code away from anything that could misuse
+  # them, and away from each other's credentials:
+  #   qodo-record  reads the record. The only job with QODO_API_KEY. A fresh runner,
+  #                so nothing agent-written code (npm test) left on the agent job's
+  #                runner can read the key. No PR code: it checks out only
+  #                .github/polson from the default branch. Its token can only read
+  #                contents, no step gets GH_TOKEN, and the installer and CLI run
+  #                with an environment allowlist.
+  #   verify-qodo  decides and labels, with issues: write, but never runs Qodo's code
+  #                and has no Qodo key. Right before it writes, it reads the labels
+  #                and the PR head: still agent-working, still the head the agent
+  #                job checked.
+  # A ticket is reviewed only if Qodo's latest run is a completed, complete,
+  # non-skipped review of that head. Anything else goes to a person.
+  qodo-record:
+    needs: agent
+    if: needs.agent.outputs.candidate == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    outputs:
+      run: ${{ steps.record.outputs.run }}
+      effort: ${{ steps.record.outputs.effort }}
+    steps:
+      - name: Check out the scripts from the default branch
+        timeout-minutes: 3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch || 'main' }}
+          sparse-checkout: .github/polson
+          persist-credentials: false
 
-          # Comment first. If the comment fails, the issue stays agent-working, this
-          # step fails, and the next run's left-behind check hands it over.
-          gh issue comment "$ISSUE_NUMBER" --body "$(printf '%s\n\n%s\n\nRun: %s' \
-            "Polson's agent stopped without finishing, so this needs a person." "$why" "$RUN_URL")"
-          gh issue edit "$ISSUE_NUMBER" --remove-label agent-working --add-label needs-human
+      - name: Set up Node 24 (the Qodo CLI runs on Node)
+        timeout-minutes: 3
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      - name: Make a temporary QODO_HOME
+        timeout-minutes: 1
+        run: echo "QODO_HOME=$(mktemp -d "$RUNNER_TEMP/qodo-home.XXXXXX")" >> "$GITHUB_ENV"
+
+      # Qodo's published, immutable installer, checked against this SHA-256 before
+      # it runs, pinned to one CLI version. Not secret.
+      - name: Install the Qodo CLI
+        timeout-minutes: 4
+        env:
+          QODO_INSTALLER_URL: https://get.qodo.ai/installers/9dfe51a938ac0b7e193d03a1acc7d5f4d35a829efff6aff79b3fd4114f17d8ff/install.sh
+          QODO_INSTALLER_SHA256: 9dfe51a938ac0b7e193d03a1acc7d5f4d35a829efff6aff79b3fd4114f17d8ff
+          QODO_CLI_VERSION: 2.4.0
+        run: bash .github/polson/qodo-cli.sh install
+
+      # Up to 5 reads a minute apart (the record can lag Qodo's comment): at most
+      # 5 x 60 s for the CLI plus 4 x 60 s of waiting, inside 12 minutes.
+      - name: Read Qodo's review record for the head commit
+        id: record
+        timeout-minutes: 12
+        env:
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ needs.agent.outputs.pr }}
+          HEAD_SHA: ${{ needs.agent.outputs.head_sha }}
+          QODO_API_KEY: ${{ secrets.QODO_API_KEY }}
+          QODO_BASE_URL: https://sdk.qodo.ai
+          QODO_DISABLE_AUTOUPDATE: "1"
+          QODO_DISABLE_SKILLS_AUTOUPDATE: "1"
+          QODO_NO_KEYCHAIN: "1"
+        run: PATH="$QODO_HOME/bin:$PATH" bash .github/polson/qodo-record.sh
+
+      - name: Delete QODO_HOME
+        if: always()
+        timeout-minutes: 1
+        run: rm -rf "${QODO_HOME:?}"
+
+  verify-qodo:
+    needs: [agent, qodo-record]
+    if: needs.agent.outputs.candidate == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: write
+    steps:
+      - name: Check out the scripts from the default branch
+        timeout-minutes: 3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch || 'main' }}
+          sparse-checkout: .github/polson
+          persist-credentials: false
+
+      - name: "Verify: agent-done or needs-human"
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ISSUE_NUMBER: ${{ needs.agent.outputs.issue }}
+          PR: ${{ needs.agent.outputs.pr }}
+          HEAD_SHA: ${{ needs.agent.outputs.head_sha }}
+          CI_DETAIL: ${{ needs.agent.outputs.ci_detail }}
+          ROUNDS: ${{ needs.agent.outputs.rounds }}
+          QODO_RUN: ${{ needs.qodo-record.outputs.run }}
+          QODO_EFFORT: ${{ needs.qodo-record.outputs.effort }}
+        run: bash .github/polson/verify-qodo.sh "$ISSUE_NUMBER"
+
+  # Always runs last, so a ticket is never left in agent-working: if qodo-record or
+  # verify-qodo did not start, failed or was cancelled, the ticket goes to a person.
+  hand-over:
+    needs: [agent, qodo-record, verify-qodo]
+    if: always() && needs.agent.outputs.issue != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check out the hand-over script from the default branch
+        timeout-minutes: 3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch || 'main' }}
+          sparse-checkout: .github/polson
+          persist-credentials: false
+
+      - name: Hand over a ticket still in agent-working
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ISSUE_NUMBER: ${{ needs.agent.outputs.issue }}
+          VERIFY_RESULT: ${{ needs.verify-qodo.result }}
+        run: bash .github/polson/hand-over.sh final "$ISSUE_NUMBER"

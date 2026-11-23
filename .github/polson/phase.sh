@@ -12,7 +12,9 @@
 #   wait <issue> <round>           run wait-for-pr.sh on $PR, pass its outputs on, then
 #                                  gate: output next=resolve (with `prompt`)|finish|stop
 #   after-resolve <issue> <round>  output fixed=true|false and next=wait|finish|stop
-#   finish <issue>                 agent-done if every check passed, otherwise needs-human
+#   finish <issue>                 candidate-done if every check passed (outputs candidate,
+#                                  pr, head_sha, ci_detail, rounds for the verify-qodo job,
+#                                  which sets agent-done), otherwise needs-human
 #
 # Needs GH_TOKEN and GH_REPO. Each command reads the values it needs from the
 # environment (see the workflow) and writes outputs to $GITHUB_OUTPUT.
@@ -211,7 +213,7 @@ case "$cmd" in
     # Run the read-only wait, then pass its outputs on and read them back.
     wait_out=$(mktemp)
     GITHUB_OUTPUT="$wait_out" bash "$here/wait-for-pr.sh" "$PR"
-    PR_STATE="" HEAD_SHA="" CI="" CI_DETAIL="" QODO="" QODO_OPEN="" QODO_RUN=""
+    PR_STATE="" HEAD_SHA="" CI="" CI_DETAIL="" QODO="" QODO_OPEN=""
     while IFS='=' read -r key value; do
       case "$key" in
         pr_state) PR_STATE="$value" ;;
@@ -220,7 +222,6 @@ case "$cmd" in
         ci_detail) CI_DETAIL="$value" ;;
         qodo) QODO="$value" ;;
         qodo_open) QODO_OPEN="$value" ;;
-        qodo_run) QODO_RUN="$value" ;;
         *) continue ;;
       esac
       set_out "$key" "$value"
@@ -240,13 +241,7 @@ case "$cmd" in
       exit 0
     fi
     if [ "${QODO:-}" != "finished" ]; then
-      # A skipped review is not a review (issue #26): say so, so a person knows
-      # that waiting longer will not help.
-      if [ "${QODO_RUN:-}" = "skipped" ]; then
-        escalate "Qodo skipped reviewing ${HEAD_SHA:0:7}: its review record shows a skipped run, which is not a review. A person reviews the pull request or accepts an exception in writing. Pull request: #$PR."
-      else
-        escalate "Qodo did not finish reviewing ${HEAD_SHA:0:7} within $limit (its latest run: ${QODO_RUN:-unknown}). Pull request: #$PR."
-      fi
+      escalate "Qodo did not finish reviewing ${HEAD_SHA:0:7} within $limit. Pull request: #$PR."
       exit 0
     fi
     if [ "$round" = "2" ]; then
@@ -325,21 +320,15 @@ case "$cmd" in
       escalate "Qodo still lists $QODO_OPEN open High or Medium finding(s) on ${HEAD_SHA:0:7} after $rounds fix round(s). Pull request: #$PR."
       exit 0
     fi
-    gh_ issue comment "$issue" --body "$(cat <<EOF
-Polson's checks passed. This is ready for a person to review and decide whether to merge.
-
-- Pull request: https://github.com/$GH_REPO/pull/$PR
-- Head commit: $HEAD_SHA
-- CI: $CI_DETAIL
-- Qodo: finished reviewing ${HEAD_SHA:0:7}, with 0 open High or Medium findings
-- Fix rounds used: $rounds of 2
-
-The agent's latest report above lists each acceptance criterion with its evidence, and each Qodo finding with what it did.
-
-Run: $run_url
-EOF
-)"
-    gh_ issue edit "$issue" --remove-label agent-working --add-label agent-done
+    # Every check this job can make passed. Qodo's comment cannot tell a skipped
+    # review from a real one, so this job does not set agent-done: the verify-qodo
+    # job, on a fresh runner, reads Qodo's own review record and decides (#26).
+    echo "Candidate-done: CI is green and Qodo's comment lists no open High or Medium finding on ${HEAD_SHA:0:7}."
+    set_out candidate true
+    set_out pr "$PR"
+    set_out head_sha "$HEAD_SHA"
+    set_out ci_detail "$CI_DETAIL"
+    set_out rounds "$rounds"
     ;;
 
   *)
