@@ -45,12 +45,23 @@ awk '
   BEGIN { seen_review = 0; footer = 0; resolved_section = 0; label = ""
           open_hm = 0; open_all = 0; unknown = 0
           counts = 0; count_sum = 0; closed_section = 0
-          group_sev = ""; group_left = 0 }
+          group_sev = ""; group_left = 0; in_group = 0; group_depth = 0; depth = 0 }
   /^[[:space:]]*<h3>Code Review by Qodo<\/h3>/ { seen_review = 1 }
 
-  # A group still owed findings when another group, the resolved section or the
-  # end of the comment begins has fewer findings than its header said.
-  function end_group() { if (group_left > 0) unknown++; group_sev = ""; group_left = 0 }
+  # A group is open from its header to the </details> that closes the header'"'"'s
+  # <details>. Only <details> tags at the start of a line count: the ones inside a
+  # finding are quoted (">"). This rule runs before the header rule below, so a
+  # group'"'"'s depth includes its own <details>.
+  /^<details/ { depth++ }
+  /^<\/details>/ { if (in_group && depth == group_depth) end_group(); depth-- }
+
+  # A group still owed findings when it closes, or when another group, the resolved
+  # section or the end of the comment begins, has fewer findings than its header
+  # said.
+  function end_group() {
+    if (group_left > 0) unknown++
+    in_group = 0; group_sev = ""; group_left = 0
+  }
   /^<details><summary><strong>Resolved findings<\/strong>/ { end_group(); resolved_section = 1; closed_section = 1 }
   /^<h3>Great, no issues found!<\/h3>/ { closed_section = 1 }
   /^<a href="https:\/\/www\.qodo\.ai"><img src="https:\/\/www\.qodo\.ai\/wp-content\/uploads\/[0-9\/]+qodo-logo\.svg"/ { footer = 1 }
@@ -73,6 +84,7 @@ awk '
       header = substr($0, RSTART, RLENGTH)
       match(header, /\([0-9]+\)/)
       group_left = substr(header, RSTART + 1, RLENGTH - 2) + 0
+      in_group = 1; group_depth = depth
       if (header ~ /View high/) group_sev = "High"
       else if (header ~ /View medium/) group_sev = "Medium"
       else group_sev = "Low"
@@ -91,8 +103,11 @@ awk '
   }
 
   /^<summary>[[:space:]]+[0-9]+\.[[:space:]]/ {
-    # In a group, the header gives the severity, and a badge must agree with it.
-    if (group_left > 0) {
+    # In a group, the header gives the severity, and a badge must agree with it. A
+    # finding past the header'"'"'s N, still inside the group, is unknown, badge or not
+    # (Qodo on PR #42), and so is a resolved or dismissed one.
+    if (in_group && group_left == 0) { unknown++; label = ""; next }
+    if (in_group) {
       sev = (label == "" || label == group_sev) ? group_sev : "?"
       group_left--
     } else sev = label

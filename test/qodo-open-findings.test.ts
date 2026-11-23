@@ -85,6 +85,28 @@ describe("qodo-open-findings.sh: severity groups", () => {
     expect(run(body())).toBe("unknown");
   });
 
+  // Qodo on PR #42 ("Overfull groups can pass as valid"): a finding past the
+  // header's N, still inside the group's <details>, is unknown even with its own
+  // badge, and even when the category count badge matches.
+  it("an overfull group whose extra finding has its own badge: unknown", () => {
+    const LOW_BADGE =
+      '<img src="https://img.shields.io/badge/Low-634FD1?style=flat-square" height="20px" alt="Informational">';
+    const third = "<details>\n<summary>  3.  ";
+    expect(low).toContain(third);
+    const overfull = low.replace("View low (3)", "View low (2)").replace(third, `${LOW_BADGE}\n\n${third}`);
+    expect(run(overfull)).toBe("unknown");
+  });
+
+  // Control: the same badged finding after the group's closing </details> stands
+  // alone, so the case above is unknown because it is inside the group.
+  it("control: a badged finding after the group closes is counted on its own", () => {
+    const after = `${MEDIUM_BADGE}\n\n${finding(4)}`;
+    const close = "</details>\n\n<img src=\"https://www.qodo.ai/wp-content/uploads/2025/11/light-grey-line.svg\"";
+    expect(low).toContain(close);
+    const body = low.replace(close, close.replace("</details>\n\n", `</details>\n\n${after}`)).replace("Bugs (3)", "Bugs (4)");
+    expect(run(body)).toBe("1");
+  });
+
   it("a group badge that disagrees with its header: unknown", () => {
     const badge = low.match(/^<img src="https:\/\/img\.shields\.io\/badge\/Low-[^\n]*$/m)?.[0];
     expect(badge).toBeDefined();
