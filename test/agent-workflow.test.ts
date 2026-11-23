@@ -46,6 +46,16 @@ describe("polson-agent.yml", () => {
     expect(copy).toContain('sudo chmod -R a-w "${{ runner.temp }}/polson"');
   });
 
+  // The key has the repo owner's full Qodo access. Only the step that reads Qodo's
+  // record gets it; qodo-record.sh fetches the CLI's tool catalog in that same step
+  // (issue #37), so no other step needs it.
+  it("QODO_API_KEY reaches only the step that reads Qodo's review record", () => {
+    expect(WORKFLOW.match(/secrets\.QODO_API_KEY/g) ?? []).toHaveLength(1);
+    const read = step("Read Qodo's review record for the head commit");
+    expect(read).toContain("QODO_API_KEY: ${{ secrets.QODO_API_KEY }}");
+    expect(read).toContain("bash .github/polson/qodo-record.sh");
+  });
+
   // Every step has a limit; together they must leave the job's last 5 minutes for
   // setup and post steps, so the hand-over and the transcript upload always run.
   it("the agent job's step limits add up to at most 145 of its 150 minutes", () => {
