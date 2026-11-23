@@ -29,8 +29,8 @@ describe("qodo-open-findings.sh on real Qodo comments", () => {
     expect(run(fixture("pr19-all-resolved.md"))).toBe("0");
   });
 
-  it('reports 0 for "no issues found" (PR #15)', () => {
-    expect(run(fixture("pr15-no-issues.md"))).toBe("0");
+  it('reports 0 for "no issues found" (PR #11)', () => {
+    expect(run(fixture("pr11-no-issues.md"))).toBe("0");
   });
 
   // PR #24's own review quotes "Resolved findings", "no issues found" and a
@@ -67,14 +67,14 @@ describe("qodo-open-findings.sh fails closed", () => {
     expect(run(lines.slice(0, summary + 4).join("\n"))).toBe("unknown");
   });
 
-  it('reports unknown for PR #15 cut before "no issues found"', () => {
-    const body = fixture("pr15-no-issues.md");
+  it('reports unknown for PR #11 cut before "no issues found"', () => {
+    const body = fixture("pr11-no-issues.md");
     expect(run(body.slice(0, body.indexOf("<h3>Great, no issues found!")))).toBe("unknown");
   });
 
   // Qodo on PR #24 ("Truncated comment reports a count"): a comment cut anywhere
   // before its footer must never print a count, whatever the badges say.
-  it.each(["pr15-no-issues.md", "pr19-all-resolved.md", "pr20-open-medium.md", "pr24-open-two-medium.md"])(
+  it.each(["pr11-no-issues.md", "pr19-all-resolved.md", "pr20-open-medium.md", "pr24-open-two-medium.md"])(
     "reports unknown for %s cut after any line before the footer",
     (name) => {
       const lines = fixture(name).split("\n");
