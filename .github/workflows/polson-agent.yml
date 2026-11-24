@@ -52,24 +52,9 @@ concurrency:
   group: polson-agent
   cancel-in-progress: false
 
-# The workflow token (GITHUB_TOKEN) gets only these permissions.
-permissions:
-  # Required by the action's documented setup. The agent pushes its ticket branch
-  # with the Claude GitHub App token, which asks for contents: write itself. The
-  # scripts use the workflow token only to fetch the PR branch.
-  contents: write
-  # Required by the action's documented setup, for opening and updating the PR.
-  # The scripts use it to read the PR and Qodo's comments.
-  pull-requests: write
-  # The label swaps and the comments the scripts post use the workflow token.
-  issues: write
-  # Lets the action fetch a GitHub OIDC token and exchange it for the Claude
-  # GitHub App token. Without it the action cannot authenticate to GitHub.
-  id-token: write
-  # Lets the agent read CI results for its PR (paired with additional_permissions).
-  actions: read
-  # Lets the wait script read the CI check runs on the PR's head commit.
-  checks: read
+# No workflow-wide token permissions: every job declares its own below, and a job
+# without a block gets none.
+permissions: {}
 
 jobs:
   agent:
@@ -79,6 +64,32 @@ jobs:
       github.event_name != 'issues' ||
       (github.event.label.name == 'ready-for-agent' && github.event.sender.type == 'User')
     runs-on: ubuntu-latest
+    # The workflow token (GITHUB_TOKEN) for this job. The agent's own pushes and
+    # pull requests do not use it: claude-code-action exchanges an OIDC token for
+    # the Claude GitHub App token, which carries the agent's write access and is
+    # what git and gh use inside the agent steps (checkout keeps no credentials).
+    # Reviewed after the Arnica SAST finding "Excessive workflow permission
+    # assignment" (Day 16): contents and pull-requests were write, and nothing
+    # writes them with this token.
+    permissions:
+      # Reads only: actions/checkout, the git fetch of the PR branch in
+      # phase.sh (resolve phases), and the action's Bun download.
+      contents: read
+      # Reads only: phase.sh (gh pr list, gh pr view) and wait-for-pr.sh (gh pr
+      # view, and Qodo's comments on the PR).
+      pull-requests: read
+      # Writes: the label swaps and comments in the hand-over steps, the "Mark
+      # the issue agent-working" step, phase.sh and hand-over.sh.
+      issues: write
+      # Required: claude-code-action fetches a GitHub OIDC token and exchanges it
+      # for the Claude GitHub App token; without it the action cannot
+      # authenticate. Kept after the Arnica review (Day 16).
+      id-token: write
+      # The action's CI tools for the agent read workflow runs with this token
+      # (paired with additional_permissions: actions: read).
+      actions: read
+      # wait-for-pr.sh reads the CI check runs on the PR's head commit.
+      checks: read
     # Time budget. Every step has its own limit, and the limits add up to 145
     # minutes, so the final hand-over step always starts before the job's 150
     # minutes run out (the rest covers job setup and post steps).
