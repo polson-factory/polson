@@ -94,25 +94,32 @@ flowchart TD
   PW --> HD
   HD -- "relabel" --> L
 
+  QW["Qodo workflow 'Polson gate: no Medium+ findings':<br/>no finding of Medium or higher in all 9 categories<br/>on the reviewed commit, so it adds the 'Qodo approved' label.<br/>BUILT: active Day 14, never seen to add the label.<br/>PR #46: open Medium, no label (as expected)"]
+  QG{"Approval guard: does the PR change .github/**?<br/>BUILT: PR #45 (.github/polson/, clean review)<br/>got no label, but the workflow was not seen to run"}
+  QW --> QG
+  QG -- "no: label added" --> HD
+  QG -- "yes: no label, a person must approve" --> HD
+  SEP["Still checked separately, never by the label:<br/>required CI (typecheck, tests), acceptance criteria,<br/>every Low listed, the review covers the head (qodo-record)"]
+  SEP --> HD
+
   MG["A person merges with gh pr merge.<br/>protect-main: a PR and both CI checks,<br/>no force push or deletion, no bypass<br/>USED: PR #11, PR #19, PR #24"]
   HD -- "gate met" --> MG --> MAIN["main"]
 
   INVA["Codebase Wisdom inside the agent run<br/>PLANNED"]
   LRA["Qodo local review inside the agent run<br/>PLANNED"]
-  PH["Protected path: .github/ changes need<br/>human review on GitHub. PLANNED: Day 14"]
   NR["Night record and morning report from each run<br/>PLANNED: code in src/, not run by the workflow"]
   INVA -.-> B
   LRA -.-> B
-  PH -.-> MG
   AD -.-> NR
   NH -.-> NR
 
   classDef used fill:#d8f0dc,stroke:#2e7d32,color:#111
   classDef built fill:#fff4cc,stroke:#b58900,color:#111
   classDef planned fill:#eeeeee,stroke:#888,stroke-dasharray:4 3,color:#444
-  class T,INV,RT,P1,P2,P4,PW,L,NT,MK,NOP,B,AB,CI,WT,RS,AD,NH,HD,MG used
-  class WD,SW,AGE,HO,CD,QR,VQ,HJ built
-  class INVA,LRA,PH,NR planned
+  class T,INV,RT,P1,P2,P4,PW,L,NT,MK,NOP,B,AB,CI,WT,RS,AD,NH,HD,MG,CD,QR,VQ,SEP used
+  class WD,SW,AGE,HO,HJ built
+  class INVA,LRA,NR planned
+  class QW,QG built
 ```
 
 ## Gates
@@ -196,9 +203,19 @@ Each gate says what must pass, the evidence it uses, what happens on failure, an
 | | |
 |---|---|
 | Must pass | The quality gate's "done": no valid High or Medium open, typecheck and tests pass, the latest Qodo review covers the final code, every Low listed. A disagreed finding is dismissed in Qodo, and an exception is accepted in writing on the PR. |
+| The Qodo approved label | An input, not the decision. It says only that Qodo's workflow criteria were met on the commit it reviewed (gate 8a). It does not show that CI passed, that the tests or the acceptance criteria hold, that every Low is listed, or that the review covers the current head. Those are checked as before. |
 | Evidence | The PR, Qodo's review, CI, and the agent's report or the person's notes. |
 | On failure | No merge. The person relabels to retry, takes the ticket over, or closes it. |
 | Who decides | A person. |
+
+### 8a. Qodo workflow and approval guard (Qodo, Day 14)
+
+| | |
+|---|---|
+| Must pass | Qodo's workflow "Polson gate: no Medium+ findings": the review has no finding of Medium or higher in any of its 9 categories, so Qodo adds the "Qodo approved" label. The approval guard (repository shrooms08/polson, path `.github/**`) means a PR that changes `.github/**` gets no label from the workflow, however clean the review: a person approves it. |
+| Evidence | The PR's labels (`gh pr view --json labels`) and Qodo's review. The workflow's own activity is in Qodo's portal (PR Triage). The Qodo CLI has no tool that reads workflow activity, so from the command line only the label itself shows a result. |
+| On failure | No label. Nothing else changes: gates 4 to 8 still decide. |
+| Who decides | Qodo's workflow for the label; a person for anything under `.github/**` and for every merge. |
 
 ### 9. `protect-main` ruleset
 
@@ -251,7 +268,8 @@ Each gate says what must pass, the evidence it uses, what happens on failure, an
 | Merge by a person through `protect-main` | USED | PR #11, PR #19, PR #24 |
 | Codebase Wisdom inside the agent run | PLANNED | |
 | Qodo local review inside the agent run | PLANNED | |
-| Protected path: `.github/` changes need human review on GitHub | PLANNED | Day 14 |
+| Qodo workflow adds "Qodo approved" when no Medium+ finding | BUILT | Active since Day 14. PR #46 (#44, outside the guard) has an open Medium on 8894d11 and no label, which is expected. No PR has yet met the criteria outside the guard, so the label being added has not been seen. | |
+| Approval guard: `.github/**` changes get no label, a person approves | BUILT | PR #45 (#36, `.github/polson/`) has a complete standard review of f718662 with no open findings, and no label. That matches the guard, but with no label seen on any PR it does not yet prove the guard (rather than an idle workflow) held it back. | |
 | Night record and morning report from each run | PLANNED | `src/night-record.ts` and `src/morning-report.ts` exist; no workflow step writes a record |
 
 ## Walkthrough: issue #23
