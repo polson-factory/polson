@@ -94,8 +94,8 @@ flowchart TD
   PW --> HD
   HD -- "relabel" --> L
 
-  QW["Qodo workflow 'Polson gate: no Medium+ findings':<br/>no finding of Medium or higher in all 9 categories<br/>on the reviewed commit, so it adds the 'Qodo approved' label.<br/>BUILT: active Day 14, never seen to add the label.<br/>PR #46: open Medium, no label (as expected)"]
-  QG{"Approval guard: does the PR change .github/**?<br/>BUILT: PR #45 (.github/polson/, clean review)<br/>got no label, but the workflow was not seen to run"}
+  QW["Qodo workflow 'Polson gate: no Medium+ findings':<br/>no finding of Medium or higher in all 9 categories<br/>on the reviewed commit, so it adds the 'Qodo approved' label.<br/>USED: PR #46, labelled at 08:09:11Z by qodo-code-review[bot]<br/>on 8a59478 (complete review, no open finding);<br/>no label on 8894d11 while a Medium was open"]
+  QG{"Approval guard: does the PR change .github/**?<br/>USED: PR #45 (.github/polson/, clean review of f718662)<br/>got no label; the guard decision is not shown in the portal"}
   QW --> QG
   QG -- "no: label added" --> HD
   QG -- "yes: no label, a person must approve" --> HD
@@ -119,7 +119,7 @@ flowchart TD
   class T,INV,RT,P1,P2,P4,PW,L,NT,MK,NOP,B,AB,CI,WT,RS,AD,NH,HD,MG,CD,QR,VQ,SEP used
   class WD,SW,AGE,HO,HJ built
   class INVA,LRA,NR planned
-  class QW,QG built
+  class QW,QG used
 ```
 
 ## Gates
@@ -213,7 +213,7 @@ Each gate says what must pass, the evidence it uses, what happens on failure, an
 | | |
 |---|---|
 | Must pass | Qodo's workflow "Polson gate: no Medium+ findings": the review has no finding of Medium or higher in any of its 9 categories, so Qodo adds the "Qodo approved" label. The approval guard (repository shrooms08/polson, path `.github/**`) means a PR that changes `.github/**` gets no label from the workflow, however clean the review: a person approves it. |
-| Evidence | The PR's labels (`gh pr view --json labels`) and Qodo's review. The workflow's own activity is in Qodo's portal (PR Triage). The Qodo CLI has no tool that reads workflow activity, so from the command line only the label itself shows a result. |
+| Evidence | The PR's labels (`gh pr view --json labels`) and Qodo's review. The workflow's own activity is in Qodo's portal (PR Triage). The Qodo CLI has no tool that reads workflow activity, so from the command line only the label itself shows a result. The portal does not show the guard's decision either (PR #45): for a guarded PR, the evidence is a clean review and no label. |
 | On failure | No label. Nothing else changes: gates 4 to 8 still decide. |
 | Who decides | Qodo's workflow for the label; a person for anything under `.github/**` and for every merge. |
 
@@ -268,8 +268,8 @@ Each gate says what must pass, the evidence it uses, what happens on failure, an
 | Merge by a person through `protect-main` | USED | PR #11, PR #19, PR #24 |
 | Codebase Wisdom inside the agent run | PLANNED | |
 | Qodo local review inside the agent run | PLANNED | |
-| Qodo workflow adds "Qodo approved" when no Medium+ finding | BUILT | Active since Day 14. PR #46 (#44, outside the guard) has an open Medium on 8894d11 and no label, which is expected. No PR has yet met the criteria outside the guard, so the label being added has not been seen. | |
-| Approval guard: `.github/**` changes get no label, a person approves | BUILT | PR #45 (#36, `.github/polson/`) has a complete standard review of f718662 with no open findings, and no label. That matches the guard, but with no label seen on any PR it does not yet prove the guard (rather than an idle workflow) held it back. | |
+| Qodo workflow adds "Qodo approved" when no Medium+ finding | USED | PR #46 (#44, outside the guard): no label on 8894d11 while a Medium was open; after the fix, `Qodo approved` added by `qodo-code-review[bot]` at 08:09:11Z on 8a59478 (complete lite review, Medium implemented, Low outdated). No PR review or approval came with it. |
+| Approval guard: `.github/**` changes get no label, a person approves | USED | PR #45 (#36, `.github/polson/`): complete standard review of f718662 with no open findings, and no label, while the same workflow labelled PR #46. The guard's decision itself is not visible in Qodo's portal (PR Triage) or the CLI, so the evidence is the label's absence. |
 | Night record and morning report from each run | PLANNED | `src/night-record.ts` and `src/morning-report.ts` exist; no workflow step writes a record |
 
 ## Walkthrough: issue #23
@@ -327,3 +327,4 @@ Each gate says what must pass, the evidence it uses, what happens on failure, an
 11. **Two merged PRs still have open Medium findings in Qodo.** PR #12 ("Builder job now allowed 150 minutes", accepted in writing) and PR #20 ("Agent may have edited .github files", disagreed with evidence) were both merged before the quality gate existed and never dismissed. Qodo still lists both as pending.
 12. **`review_complete=false` can stick on a PR; such PRs escalate to a person by design.** In Qodo's record for PRs #1 to #27, 4 of 31 non-skip runs had it, all on PR #20 and PR #27, and once a PR had it every later run did too. `verify-qodo` treats it as not reviewed (rule 6, and Qodo's guidance requires `review_complete=true`).
 13. **Agent transcripts are kept only on failure or escalation, as summaries.** BUILT, not yet run for real. After each agent step, `keep-transcript.sh` keeps what the agent did: its text, its tool calls, failed or refused calls (cut to 300 characters), and the final result with its refused calls. It drops tool output, because the repository is public and any signed-in GitHub user can download its artifacts, and then redacts known credential formats. The agent job uploads the summaries (7-day retention) whenever the run ends without candidate-done. A step cut off at its time limit gets a partial summary from Claude Code's own session log, because the action writes its transcript only when the session ends. Not covered: a run that reached candidate-done and was then escalated by `verify-qodo`, since the agent job ends before that decision. Error text can still quote command output, and redaction only knows common formats.
+14. **Qodo's "⊘ Outdated" mark made a clean review unreadable. FIXED by #47 (PR #48).** On PR #46 (8a59478) Qodo listed a resolved Medium and an outdated Low under "Resolved findings". `qodo-open-findings.sh` knew only Resolved and Dismissed, so `wait-for-pr.sh` printed `open_high_medium=unknown` on 25 polls while Qodo's record showed nothing open. Outdated now closes a finding in the resolved section only; any other mark there, or Outdated elsewhere, is still unknown (rule 6).
