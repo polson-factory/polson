@@ -175,6 +175,27 @@ describe("keep-transcript.sh", () => {
       expect(second.kept).toBeNull();
       expect(second.note).toContain("ran but left no transcript");
     });
+
+    // Issue #36 (Qodo on PR #33): the builder leaves both an execution file and a
+    // session log. Reading the execution file must still move the session log aside,
+    // or a resolver that leaves no transcript would upload the builder's actions as
+    // its own.
+    it("never shows the builder's session log as a later step's transcript", () => {
+      const logs = join(home, ".claude", "projects", "-home-runner-work-polson-polson");
+      mkdirSync(logs, { recursive: true });
+      const builderLog = (JSON.parse(executionFile()) as object[]).map((m) => JSON.stringify(m)).join("\n");
+      writeFileSync(join(logs, "builder-session.jsonl"), builderLog + "\n");
+
+      const build = keep("build", writeExecution());
+      expect(build.status, build.stderr).toBe(0);
+      expect(JSON.parse(build.kept ?? "null").source).toBe("execution_file");
+      expect(readdirSync(logs)).toEqual([]);
+
+      const resolve1 = keep("resolve1", "");
+      expect(resolve1.status, resolve1.stderr).toBe(0);
+      expect(resolve1.kept).toBeNull();
+      expect(resolve1.note).toContain("The resolve1 step ran but left no transcript");
+    });
   });
 
   it("a step that ran but left no transcript: a warning and a note in the artifact", () => {

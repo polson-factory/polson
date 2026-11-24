@@ -21,8 +21,9 @@
 # Where it comes from. claude-code-action writes its execution file (a JSON array
 # of SDK messages) only when the session ends. A step cut off at its time limit
 # leaves none, so the newest Claude Code session log (JSON lines, written as the
-# session goes) is used instead and marked partial. Both are moved aside once
-# read, so a later step can never pick up an earlier step's transcript.
+# session goes) is used instead and marked partial. Whichever is read, it and
+# every session log are moved aside, so a later step can never pick up an earlier
+# step's transcript.
 set -euo pipefail
 
 name="${1:-}"
@@ -90,9 +91,12 @@ else
   jq -s --arg source "$source" "$filter" "$src" >"$tmp" 2>/dev/null || read_ok=no # as above
 fi
 
-# Move what was read aside, so a later step never reuses it.
+# Move what was read aside, so a later step never reuses it. Every session log
+# goes too, whichever source was read: a step that leaves an execution file also
+# leaves its session log, and a later step with no transcript of its own would
+# otherwise read that log as its own (issue #36).
 mv "$src" "$used/$name.$(basename "$src")"
-if [ "$format" = lines ]; then
+if [ -d "$sessions" ]; then
   find "$sessions" -name '*.jsonl' -type f -exec mv {} "$used/" \;
 fi
 
