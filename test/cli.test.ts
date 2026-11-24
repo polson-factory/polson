@@ -13,8 +13,8 @@ import {
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runReport } from "../src/cli.js";
 import { fixturePath, loadRawFixture } from "./fixtures.js";
@@ -276,17 +276,19 @@ describe("report CLI entry point", () => {
   const CHILD_TIMEOUT_MS = 15_000;
   const TEST_TIMEOUT_MS = 30_000;
 
-  // Run tsx's own CLI with node, so this works on Linux, macOS and Windows without a shell.
+  // One process: node loads tsx's loader itself with --import, so this works on
+  // Linux, macOS and Windows without a shell. tsx's own CLI forks a second Node
+  // process that survives a SIGKILL of the first (Qodo on PR #46), so a stalled run
+  // would leave an orphan behind. The loader is passed as an absolute file URL: the
+  // child runs in a temporary directory, where the bare "tsx" does not resolve.
   const require = createRequire(import.meta.url);
-  const tsxPackage = require.resolve("tsx/package.json");
-  const tsxBin = (JSON.parse(readFileSync(tsxPackage, "utf8")) as { bin: string }).bin;
-  const tsxCli = join(dirname(tsxPackage), tsxBin);
+  const tsxLoader = pathToFileURL(require.resolve("tsx")).href;
 
   it("prints usage on -h when run as a real command, and writes nothing", () => {
     const script = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
     const cwd = mkdtempSync(join(tmpdir(), "polson-cli-entry-"));
     try {
-      const result = spawnSync(process.execPath, [tsxCli, script, "-h"], {
+      const result = spawnSync(process.execPath, ["--import", tsxLoader, script, "-h"], {
         cwd,
         encoding: "utf8",
         input: "",
