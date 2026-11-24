@@ -5,7 +5,7 @@
 // what tools printed back. Known credential formats are redacted on top.
 // The tokens below are made-up strings in real token formats, not real credentials.
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -174,6 +174,56 @@ describe("keep-transcript.sh", () => {
       const second = keep("resolve1", "");
       expect(second.kept).toBeNull();
       expect(second.note).toContain("ran but left no transcript");
+    });
+
+    // Issue #36 (Qodo on PR #33): the builder leaves both an execution file and a
+    // session log. Reading the execution file must still move the session log aside,
+    // or a resolver that leaves no transcript would upload the builder's actions as
+    // its own.
+    it("never shows the builder's session log as a later step's transcript", () => {
+      const logs = join(home, ".claude", "projects", "-home-runner-work-polson-polson");
+      mkdirSync(logs, { recursive: true });
+      const builderLog = (JSON.parse(executionFile()) as object[]).map((m) => JSON.stringify(m)).join("\n");
+      writeFileSync(join(logs, "builder-session.jsonl"), builderLog + "\n");
+
+      const build = keep("build", writeExecution());
+      expect(build.status, build.stderr).toBe(0);
+      expect(JSON.parse(build.kept ?? "null").source).toBe("execution_file");
+      expect(readdirSync(logs)).toEqual([]);
+
+      const resolve1 = keep("resolve1", "");
+      expect(resolve1.status, resolve1.stderr).toBe(0);
+      expect(resolve1.kept).toBeNull();
+      expect(resolve1.note).toContain("The resolve1 step ran but left no transcript");
+    });
+
+    // Qodo on PR #45 ("Session scan errors can fail the job"): a session directory
+    // the sweep cannot read must not fail the step or lose this step's summary, and a
+    // later step must not trust a session log that may be an earlier step's.
+    it("a session log it cannot move aside: keeps this step, warns, and a later step keeps no session log", () => {
+      const projects = join(home, ".claude", "projects");
+      const locked = join(projects, "locked");
+      mkdirSync(join(projects, "open"), { recursive: true });
+      mkdirSync(locked);
+      writeFileSync(join(projects, "open", "builder-session.jsonl"), "{}\n");
+      writeFileSync(join(locked, "builder-old.jsonl"), "{}\n");
+      chmodSync(locked, 0o000);
+      let build;
+      try {
+        build = keep("build", writeExecution());
+      } finally {
+        chmodSync(locked, 0o755);
+      }
+
+      expect(build.status, build.stderr).toBe(0);
+      expect(JSON.parse(build.kept ?? "null").source).toBe("execution_file");
+      expect(build.stdout).toContain("::warning::Not every Claude Code session log could be moved aside after the build step");
+
+      // The log the sweep could not reach is readable now: it is still not resolve1's.
+      const resolve1 = keep("resolve1", "");
+      expect(resolve1.status, resolve1.stderr).toBe(0);
+      expect(resolve1.kept).toBeNull();
+      expect(resolve1.note).toContain("could not all be moved aside");
     });
   });
 

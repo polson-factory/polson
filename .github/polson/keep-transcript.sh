@@ -21,8 +21,9 @@
 # Where it comes from. claude-code-action writes its execution file (a JSON array
 # of SDK messages) only when the session ends. A step cut off at its time limit
 # leaves none, so the newest Claude Code session log (JSON lines, written as the
-# session goes) is used instead and marked partial. Both are moved aside once
-# read, so a later step can never pick up an earlier step's transcript.
+# session goes) is used instead and marked partial. Whichever is read, it and
+# every session log are moved aside, so a later step can never pick up an earlier
+# step's transcript.
 set -euo pipefail
 
 name="${1:-}"
@@ -34,6 +35,7 @@ fi
 : "${RUNNER_TEMP:?RUNNER_TEMP must be set}"
 dir="$RUNNER_TEMP/transcripts"
 used="$RUNNER_TEMP/transcripts-used"
+unswept="$used/.sessions-not-swept"
 mkdir -p "$dir" "$used"
 sessions="${CLAUDE_CONFIG_DIR:-${HOME:?HOME must be set}/.claude}/projects"
 
@@ -49,6 +51,11 @@ if [ -n "$src" ] && [ -f "$src" ]; then
   format=array
   source="execution_file"
 else
+  # An earlier step could not move every session log aside, so any log here may
+  # be that step's, not this one's: keep none.
+  if [ -e "$unswept" ]; then
+    note "The $name step left no execution file, and an earlier step's Claude Code session logs could not all be moved aside, so no session log was kept as its transcript."
+  fi
   src=""
   if [ -d "$sessions" ]; then
     while IFS= read -r -d '' log; do
@@ -90,10 +97,23 @@ else
   jq -s --arg source "$source" "$filter" "$src" >"$tmp" 2>/dev/null || read_ok=no # as above
 fi
 
-# Move what was read aside, so a later step never reuses it.
+# Move what was read aside, so a later step never reuses it. Every session log
+# goes too, whichever source was read: a step that leaves an execution file also
+# leaves its session log, and a later step with no transcript of its own would
+# otherwise read that log as its own (issue #36).
+#
+# The sweep must not fail the step (Qodo on PR #45): a directory find cannot read,
+# a find error or a log still there afterwards is recorded in $unswept and warned
+# about, and later steps then keep no session log (see the source pick above).
 mv "$src" "$used/$name.$(basename "$src")"
-if [ "$format" = lines ]; then
-  find "$sessions" -name '*.jsonl' -type f -exec mv {} "$used/" \;
+swept=yes
+if [ -d "$sessions" ]; then
+  find "$sessions" -name '*.jsonl' -type f -exec mv {} "$used/" \; || swept=no
+  if ! left=$(find "$sessions" -name '*.jsonl' -type f -print) || [ -n "$left" ]; then swept=no; fi
+fi
+if [ "$swept" = no ]; then
+  : >"$unswept"
+  echo "::warning::Not every Claude Code session log could be moved aside after the $name step, so later steps will not use a session log as their transcript."
 fi
 
 [ "$read_ok" = yes ] || note "The $name step's transcript could not be read, so none was kept."
