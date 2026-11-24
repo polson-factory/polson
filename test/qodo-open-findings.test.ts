@@ -45,6 +45,35 @@ describe("qodo-open-findings.sh on real Qodo comments", () => {
   it('reports 0 for three Low findings in one "View low (3)" group (PR #40)', () => {
     expect(run(fixture("pr40-three-low.md"))).toBe("0");
   });
+
+  // PR #46 at 8a59478 lists a "✓ Resolved" Medium and a "⊘ Outdated" Low under
+  // "Resolved findings" (issue #47). Qodo's CLI documents outdated as closed.
+  it('reports 0 when the resolved section has a "⊘ Outdated" finding (PR #46)', () => {
+    expect(run(fixture("pr46-resolved-and-outdated.md"))).toBe("0");
+  });
+});
+
+// Issue #47: "⊘ Outdated" closes a finding only in the "Resolved findings"
+// section. Any other mark there, or Outdated anywhere else, is unknown (rule 6).
+describe("qodo-open-findings.sh: closed marks", () => {
+  const outdated = fixture("pr46-resolved-and-outdated.md");
+
+  it("a mark the script does not know in the resolved section: unknown", () => {
+    expect(outdated).toContain("<code>⊘ Outdated</code>");
+    expect(run(outdated.replace("<code>⊘ Outdated</code>", "<code>⊘ Superseded</code>"))).toBe("unknown");
+  });
+
+  it('"⊘ Outdated" on an open finding, outside the resolved section: unknown', () => {
+    const open = fixture("pr20-open-medium.md");
+    const summary = "<summary>  1.  Agent may have edited .github files <code>📎 Requirement gap</code></summary>";
+    expect(open).toContain(summary);
+    expect(open).toContain("Requirement gaps (1)");
+    // The count badge says 0 open, so only the Outdated rule can make this unknown.
+    const marked = open
+      .replace(summary, summary.replace("</summary>", " <code>⊘ Outdated</code></summary>"))
+      .replace("Requirement gaps (1)", "Requirement gaps (0)");
+    expect(run(marked)).toBe("unknown");
+  });
 });
 
 // Issue #41: a "View <severity> (N)" header labels the next N findings in its
@@ -147,7 +176,7 @@ describe("qodo-open-findings.sh fails closed", () => {
 
   // Qodo on PR #24 ("Truncated comment reports a count"): a comment cut anywhere
   // before its footer must never print a count, whatever the badges say.
-  it.each(["pr11-no-issues.md", "pr19-all-resolved.md", "pr20-open-medium.md", "pr24-open-two-medium.md", "pr40-three-low.md"])(
+  it.each(["pr11-no-issues.md", "pr19-all-resolved.md", "pr20-open-medium.md", "pr24-open-two-medium.md", "pr40-three-low.md", "pr46-resolved-and-outdated.md"])(
     "reports unknown for %s cut after any line before the footer",
     (name) => {
       const lines = fixture(name).split("\n");

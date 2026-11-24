@@ -23,7 +23,8 @@
 #
 # Each finding is listed as `<summary>  N.  Title ...`. Fixed findings carry
 # "✓ Resolved", and findings a person dismissed carry "✗ Dismissed"; neither
-# counts as open.
+# counts as open. In the "Resolved findings" section, "⊘ Outdated" also closes a
+# finding (Qodo's CLI lists outdated as closed); any other mark there is unknown.
 #
 # Qodo also shows the open findings by category, as count badges such as
 # `<code>🐞 Bugs (1)</code>`, `<code>📘 Rule violations (0)</code>` and
@@ -113,6 +114,10 @@ awk '
     } else sev = label
     label = ""
     if ($0 ~ /✓ Resolved/ || $0 ~ /✗ Dismissed/) next
+    # "⊘ Outdated" (Qodo: the code it pointed at changed) closes a finding in the
+    # resolved section only (PR #46, issue #47). Anywhere else it is a layout this
+    # script has not seen, so unknown.
+    if ($0 ~ /⊘ Outdated/) { if (!resolved_section) unknown++; next }
     if (resolved_section) unknown++
     else if (sev == "High" || sev == "Medium") { open_hm++; open_all++ }
     else if (sev == "Low") open_all++
