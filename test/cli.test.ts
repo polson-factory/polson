@@ -11,9 +11,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runReport } from "../src/cli.js";
 import { fixturePath, loadRawFixture } from "./fixtures.js";
@@ -272,20 +273,40 @@ describe("report CLI", () => {
 });
 
 describe("report CLI entry point", () => {
+  const CHILD_TIMEOUT_MS = 15_000;
+  const TEST_TIMEOUT_MS = 30_000;
+
+  // One process: node loads tsx's loader itself with --import, so this works on
+  // Linux, macOS and Windows without a shell. tsx's own CLI forks a second Node
+  // process that survives a SIGKILL of the first (Qodo on PR #46), so a stalled run
+  // would leave an orphan behind. The loader is passed as an absolute file URL: the
+  // child runs in a temporary directory, where the bare "tsx" does not resolve.
+  const require = createRequire(import.meta.url);
+  const tsxLoader = pathToFileURL(require.resolve("tsx")).href;
+
   it("prints usage on -h when run as a real command, and writes nothing", () => {
-    const tsx = fileURLToPath(new URL("../node_modules/.bin/tsx", import.meta.url));
     const script = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
     const cwd = mkdtempSync(join(tmpdir(), "polson-cli-entry-"));
     try {
-      const result = spawnSync(tsx, [script, "-h"], { cwd, encoding: "utf8" });
+      const result = spawnSync(process.execPath, ["--import", tsxLoader, script, "-h"], {
+        cwd,
+        encoding: "utf8",
+        input: "",
+        timeout: CHILD_TIMEOUT_MS,
+        killSignal: "SIGKILL",
+      });
+      const detail = `stdout: ${JSON.stringify(result.stdout)}\nstderr: ${JSON.stringify(result.stderr)}`;
 
-      expect(result.error).toBeUndefined();
-      expect(result.status).toBe(0);
-      expect(result.stdout.startsWith("Usage: npm run report --")).toBe(true);
+      expect(
+        result.error,
+        `child process failed (timeout is ${CHILD_TIMEOUT_MS} ms): ${String(result.error)}\n${detail}`,
+      ).toBeUndefined();
+      expect(result.status, `unexpected exit status\n${detail}`).toBe(0);
+      expect(result.stdout).toMatch(/^Usage: npm run report --/);
       expect(result.stderr).toBe("");
       expect(existsSync(join(cwd, "reports"))).toBe(false);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
-  });
+  }, TEST_TIMEOUT_MS);
 });
